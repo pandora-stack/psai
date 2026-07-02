@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.0.3 beta
+- Fixed macOS uninstall purge, compacted dashboard status lines, and refreshed docs preview.
+
 ## v1.0.2 beta
 - Added safer `psai uninstall` flags for dry-run, data purge, volumes, and explicit stack dirs.
 

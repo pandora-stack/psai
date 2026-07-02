@@ -4,7 +4,7 @@
   <b>English</b> | <a href="ARCHITECTURE.ru.md">Русский</a>
 </p>
 
-`v1.0.2 beta`. `psai.sh` is one bash script, assembled from `lib/*.sh` by `build.sh`. Secrets are handled by a small Rust daemon, **stack-vault** (`vault/`).
+`v1.0.3 beta`. `psai.sh` is one bash script, assembled from `lib/*.sh` by `build.sh`. Secrets are handled by a small Rust daemon, **stack-vault** (`vault/`).
 
 ## Components
 

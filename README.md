@@ -5,7 +5,7 @@
 <h1 align="center">Pandora AI Stack</h1>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-v1.0.2-0969da">
+  <img alt="version" src="https://img.shields.io/badge/version-v1.0.3-0969da">
   <img alt="channel" src="https://img.shields.io/badge/channel-beta-0969da">
   <img alt="release" src="https://img.shields.io/badge/release-github-0969da">
 </p>
@@ -85,6 +85,11 @@ cd psai && ./psai.sh install
 | **5 - Zone and domains** | Keep the default `lan` zone, edit domains, or skip domains on local installs. |
 
 After install, run `psai` to open the dashboard.
+
+```text
+Status: psai · single · local · psai.lan
+Security profile: default
+```
 
 ## Egress Proxy
 

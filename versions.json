@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "stack": "1.0.2",
+  "stack": "1.0.3",
   "channel": "beta",
   "released": "2026-07-02",
-  "installer_sha256": "af568673b53bdce546bee57d208984d0406eafba404eab4ccb65eccc04dbc81e",
+  "installer_sha256": "3640d61faedad711b8baa9fe1df472ab8d51447b6e41a01dcb70f2aab7b7a815",
   "images": {
     "openwebui": "ghcr.io/open-webui/open-webui:main",
     "openhands": "ghcr.io/all-hands-ai/openhands:1.8.0",

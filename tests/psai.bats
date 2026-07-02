@@ -65,6 +65,28 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
+@test "banner: install header omits metadata row" {
+  # shellcheck disable=SC1090
+  source "$REPO/psai.sh"
+  run banner_install
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"title Pandora AI Stack"* ]]
+  [[ "$output" != *"channel beta"* ]]
+  [[ "$output" != *"command psai"* ]]
+}
+
+@test "dashboard: context is compact and security is separate" {
+  # shellcheck disable=SC1090
+  UI_LANG=en; source "$REPO/psai.sh"
+  STACK_NAME=psai NODE_MODE=single DEPLOY_PROFILE=local PSAI_DOMAIN=psai.lan SECURITY_PROFILE=default
+  run render_context
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Status: psai · single · local · psai.lan"* ]]
+  [[ "$output" == *"Security profile: default"* ]]
+  [[ "$output" != *"v$STACK_VERSION"* ]]
+  [[ "$output" != *"domain:"* ]]
+}
+
 @test "uninstall: help lists non-interactive safety flags" {
   run bash "$REPO/psai.sh" uninstall --help
   [ "$status" -eq 0 ]
@@ -108,5 +130,27 @@ EOF
   run bash "$REPO/psai.sh" uninstall --yes --data --dir "$stack"
   [ "$status" -eq 0 ]
   [ ! -e "$stack" ]
+  rm -rf "$tmp"
+}
+
+@test "watchdog: uninstall skip-save does not rewrite config" {
+  tmp="$(mktemp -d)"
+  stack="$tmp/stack"
+  mkdir -p "$stack"
+  cat > "$stack/.stack.env" <<EOF
+STACK_NAME='psai test'
+SAFE_STACK_NAME='psai_test'
+STACK_DIR='$stack'
+DEPLOY_PROFILE='local'
+NO_DOMAIN='true'
+SEC_WATCHDOG='true'
+EOF
+  # shellcheck disable=SC1090
+  source "$REPO/psai.sh"
+  STACK_DIR="$stack"; load_config
+  before="$(cat "$stack/.stack.env")"
+  WATCHDOG_SKIP_SAVE=true watchdog_disable >/dev/null
+  after="$(cat "$stack/.stack.env")"
+  [ "$after" = "$before" ]
   rm -rf "$tmp"
 }

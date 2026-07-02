@@ -61,10 +61,22 @@ watchdog_disable() {
   load_config || { echo "$(t no_env)"; return 1; }
   detect_os
   case "$OS_TYPE" in
-    macos) local plist; plist="$(watchdog_plist)"; launchctl unload "$plist" 2>/dev/null || true; rm -f "$plist" ;;
+    macos)
+      local plist label uid
+      plist="$(watchdog_plist)"; label="$(watchdog_label)"; uid="$(id -u)"
+      if command_exists launchctl; then
+        launchctl bootout "gui/$uid/$label" 2>/dev/null || true
+        if [ -f "$plist" ]; then
+          launchctl bootout "gui/$uid" "$plist" 2>/dev/null || true
+          launchctl unload "$plist" 2>/dev/null || true
+        fi
+        launchctl remove "$label" 2>/dev/null || true
+      fi
+      rm -f "$plist" ;;
     linux) crontab -l 2>/dev/null | grep -v "psai-watchdog:${SAFE_STACK_NAME}" | crontab - 2>/dev/null || true ;;
   esac
-  SEC_WATCHDOG="false"; save_config 2>/dev/null || true
+  SEC_WATCHDOG="false"
+  if [ "${WATCHDOG_SKIP_SAVE:-false}" != "true" ]; then save_config 2>/dev/null || true; fi
   printf '%s%s%s\n' "$C_GREEN" "$(t done_word)" "$C_RESET"
 }
 

@@ -63,6 +63,21 @@ uninstall_compose_down() {
   compose down $vol_flag --remove-orphans >/dev/null 2>&1 || true
 }
 
+uninstall_disable_watchdog() {
+  local dry="$1"
+  uninstall_note "$(t un_watchdog)"
+  if [ "$dry" != "true" ]; then
+    WATCHDOG_SKIP_SAVE=true watchdog_disable >/dev/null 2>&1 || true
+  fi
+}
+
+uninstall_purge_stack_dir() {
+  case "${STACK_DIR:-}" in ""|"/"|"$HOME") return 1 ;; esac
+  rm -rf "$STACK_DIR" 2>/dev/null || true
+  sleep 1
+  [ -e "$STACK_DIR" ] && rm -rf "$STACK_DIR" 2>/dev/null || true
+}
+
 uninstall_stack() {
   local yes="false" remove_data="false" remove_volumes="false" dry="false" arg
   while [ $# -gt 0 ]; do
@@ -91,6 +106,9 @@ uninstall_stack() {
   fi
 
   [ "$dry" = "true" ] && printf '  %s%s%s\n' "$C_YELLOW" "$(t un_dry)" "$C_RESET"
+  uninstall_disable_watchdog "$dry"
+  uninstall_note "$(t un_cron)"
+  [ "$dry" = "true" ] || cron_remove >/dev/null 2>&1 || true
   uninstall_compose_down "$dry" "$remove_volumes"
   uninstall_note "$(t un_runtime)"
   if [ "$dry" != "true" ]; then
@@ -104,16 +122,12 @@ uninstall_stack() {
   [ "$dry" = "true" ] || remove_hosts_entries
   uninstall_note "$(t un_links)"
   uninstall_command_links "$dry"
-  uninstall_note "$(t un_cron)"
-  [ "$dry" = "true" ] || cron_remove >/dev/null 2>&1 || true
-  uninstall_note "$(t un_watchdog)"
-  [ "$dry" = "true" ] || watchdog_disable >/dev/null 2>&1 || true
   uninstall_note "$(t un_seal)"
   [ "$dry" = "true" ] || rm -f "$(seal_keyfile)" 2>/dev/null || true
 
   if [ "$remove_data" = "true" ]; then
     uninstall_note "$(t un_data_rm)"
-    [ "$dry" = "true" ] || rm -rf "$STACK_DIR" 2>/dev/null || true
+    [ "$dry" = "true" ] || uninstall_purge_stack_dir || true
     printf '%s%s%s\n' "$C_GREEN" "$(t un_done)" "$C_RESET"
   else
     printf '%s %s%s%s\n' "$(t un_kept)" "$C_B" "$STACK_DIR" "$C_RESET"
