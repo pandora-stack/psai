@@ -7,9 +7,9 @@
 <text x="24" y="90" fill="#bf9cf0" class="b" xml:space="preserve">░██    ░██  ░███████   ░███████  ░██</text>
 <text x="24" y="105" fill="#bf9cf0" class="b" xml:space="preserve">░███   ░██        ░██ ░██   ░██  ░██</text>
 <text x="24" y="120" fill="#bf9cf0" class="b" xml:space="preserve">░██░█████   ░███████   ░█████░██ ░██</text>
-<text x="24" y="135" fill="#bf9cf0" class="b" xml:space="preserve">░██                version:    1.0.1</text>
+<text x="24" y="135" fill="#bf9cf0" class="b" xml:space="preserve">░██                version:    1.0.2</text>
 <text x="24" y="150" fill="#bf9cf0" class="b" xml:space="preserve">░██                release:   github</text>
-<text x="24" y="172" fill="#8a8f98">v1.0.1 · beta · local</text>
+<text x="24" y="172" fill="#8a8f98">v1.0.2 · beta · local</text>
 <text x="24" y="191"><tspan fill="#e6e6e8" class="b">psai</tspan><tspan fill="#8a8f98"> · single · local · domain: psai.lan</tspan></text>
 <text x="24" y="221" fill="#5cb6c6" class="b">Host</text>
 <line x1="24" y1="230" x2="924" y2="230" stroke="#20232a" stroke-width="1"/>

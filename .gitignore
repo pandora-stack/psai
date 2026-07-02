@@ -15,6 +15,10 @@ secrets/
 docs/data
 docs/data.*
 
+# local dev-only agent/work notes — keep out of published main
+AGENTS.md
+dev/
+
 # OS noise
 .DS_Store
 **/.DS_Store

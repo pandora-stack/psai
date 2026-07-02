@@ -260,8 +260,18 @@ t() {
       # lifecycle / misc
       no_env)         printf 'Стек не найден (.stack.env). Сначала установи.';;
       un_warn)        printf 'Удаление стека. Данные по умолчанию сохраняются.';;
+      un_usage)       printf 'Использование: psai uninstall [--yes] [--data|--keep-data] [--volumes] [--dry-run] [--dir PATH]';;
       un_confirm)     printf 'Точно удалить стек';;
       un_data)        printf 'Удалить также данные и секреты';;
+      un_unknown)     printf 'Неизвестный флаг удаления';;
+      un_dry)         printf 'Пробный режим: ничего не изменяю.';;
+      un_runtime)     printf 'runtime env / vault / wg bridge';;
+      un_hosts)       printf '/etc/hosts marker';;
+      un_links)       printf 'командные ссылки';;
+      un_cron)        printf 'cron self-update';;
+      un_watchdog)    printf 'watchdog';;
+      un_seal)        printf 'локальный seal key';;
+      un_data_rm)     printf 'данные и секреты';;
       un_done)        printf 'Стек удалён.';;
       un_kept)        printf 'Данные сохранены:';;
       # multi-node
@@ -510,8 +520,18 @@ t() {
       seal_off)       printf 'off';; seal_sealed) printf 'sealed';; seal_unsealed) printf 'unsealed';;
       no_env)         printf 'No stack found (.stack.env). Install first.';;
       un_warn)        printf 'Removing the stack. Data is kept by default.';;
+      un_usage)       printf 'Usage: psai uninstall [--yes] [--data|--keep-data] [--volumes] [--dry-run] [--dir PATH]';;
       un_confirm)     printf 'Really remove the stack';;
       un_data)        printf 'Also remove data and secrets';;
+      un_unknown)     printf 'Unknown uninstall flag';;
+      un_dry)         printf 'Dry run: no changes will be made.';;
+      un_runtime)     printf 'runtime env / vault / wg bridge';;
+      un_hosts)       printf '/etc/hosts marker';;
+      un_links)       printf 'command links';;
+      un_cron)        printf 'cron self-update';;
+      un_watchdog)    printf 'watchdog';;
+      un_seal)        printf 'local seal key';;
+      un_data_rm)     printf 'data and secrets';;
       un_done)        printf 'Stack removed.';;
       un_kept)        printf 'Data kept:';;
       ra_host)        printf 'Agent worker node IP';;

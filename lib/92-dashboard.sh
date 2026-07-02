@@ -263,7 +263,7 @@ print_help() {
   printf "    %-${w}s security profile\n"      "$cmd security"
   printf "    %-${w}s secrets seal / unseal\n" "$cmd seal|unseal"
   printf "    %-${w}s isolate agents on a VPS (WireGuard)\n" "$cmd agents --host IP"
-  printf "    %-${w}s uninstall (data kept)\n" "$cmd uninstall"
+  printf "    %-${w}s uninstall stack (data kept)\n" "$cmd uninstall [--data|--dry-run]"
   printf "    %-${w}s language ru|en\n"        '--lang ru|en'
   printf '\n'
 }

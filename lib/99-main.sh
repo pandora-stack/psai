@@ -33,7 +33,7 @@ main() {
     cron-install) ensure_lang; cron_install ;;
     cron-remove)  ensure_lang; cron_remove ;;
     self-update)  ensure_lang; self_update ;;
-    uninstall)    ensure_lang; uninstall_stack ;;
+    uninstall)    shift || true; ensure_lang; uninstall_stack "$@" ;;
     agents|isolate-agents|remote-agents) shift || true; ensure_lang; remote_agents "$@" ;;
     rekey)        shift || true; ensure_lang; load_config && ra_rekey "$@" ;;
     kms-node)     shift || true; ensure_lang; load_config && ra_install_kms_node "$@" ;;

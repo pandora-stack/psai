@@ -64,3 +64,49 @@ setup() {
   run grep -q '"installer_sha256"' "$REPO/versions.json"
   [ "$status" -eq 0 ]
 }
+
+@test "uninstall: help lists non-interactive safety flags" {
+  run bash "$REPO/psai.sh" uninstall --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--yes"* ]]
+  [[ "$output" == *"--dry-run"* ]]
+}
+
+@test "uninstall: dry-run keeps an explicit stack dir" {
+  tmp="$(mktemp -d)"
+  stack="$tmp/stack"
+  mkdir -p "$stack/compose" "$stack/data" "$stack/secrets"
+  cat > "$stack/.stack.env" <<EOF
+STACK_NAME='psai test'
+SAFE_STACK_NAME='psai_test'
+STACK_DIR='$stack'
+DEPLOY_PROFILE='local'
+NO_DOMAIN='true'
+SEC_SEAL='false'
+SEAL_ENABLED='false'
+EOF
+  run bash "$REPO/psai.sh" uninstall --yes --dry-run --dir "$stack"
+  [ "$status" -eq 0 ]
+  [ -d "$stack" ]
+  [[ "$output" == *"Dry run"* || "$output" == *"Пробный режим"* ]]
+  rm -rf "$tmp"
+}
+
+@test "uninstall: --data removes an explicit stack dir" {
+  tmp="$(mktemp -d)"
+  stack="$tmp/stack"
+  mkdir -p "$stack/compose" "$stack/data" "$stack/secrets"
+  cat > "$stack/.stack.env" <<EOF
+STACK_NAME='psai test'
+SAFE_STACK_NAME='psai_test'
+STACK_DIR='$stack'
+DEPLOY_PROFILE='local'
+NO_DOMAIN='true'
+SEC_SEAL='false'
+SEAL_ENABLED='false'
+EOF
+  run bash "$REPO/psai.sh" uninstall --yes --data --dir "$stack"
+  [ "$status" -eq 0 ]
+  [ ! -e "$stack" ]
+  rm -rf "$tmp"
+}

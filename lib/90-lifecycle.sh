@@ -33,25 +33,91 @@ status_stack()  { load_config || exit 1; ensure_path_brew; compose ps; }
 restart_stack() { load_config || exit 1; ensure_path_brew; compose restart; }
 logs_stack()    { load_config || exit 1; ensure_path_brew; local svc="${1:-}"; if [ -n "$svc" ]; then compose logs -f --tail=200 "$svc"; else compose logs -f --tail=200; fi; }
 
+uninstall_usage() {
+  printf '%s\n' "$(t un_usage)"
+}
+
+uninstall_note() {
+  printf '  %s- %s%s\n' "$C_DIM" "$1" "$C_RESET"
+}
+
+uninstall_command_links() {
+  local dry="$1" d
+  [ "$dry" = "true" ] || remove_legacy_command_links
+  for d in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" "$HOME/bin"; do
+    if [ -L "$d/$MGMT_NAME" ]; then
+      uninstall_note "$d/$MGMT_NAME"
+      [ "$dry" = "true" ] || rm -f "$d/$MGMT_NAME" 2>/dev/null || true
+    fi
+  done
+}
+
+uninstall_compose_down() {
+  local dry="$1" volumes="$2" vol_flag=""
+  [ "$volumes" = "true" ] && vol_flag="-v"
+  if [ ! -f "$STACK_DIR/compose/docker-compose.yml" ]; then return 0; fi
+  uninstall_note "docker compose down ${vol_flag:+$vol_flag }--remove-orphans"
+  [ "$dry" = "true" ] && return 0
+  command_exists docker || return 0
+  # shellcheck disable=SC2086
+  compose down $vol_flag --remove-orphans >/dev/null 2>&1 || true
+}
+
 uninstall_stack() {
+  local yes="false" remove_data="false" remove_volumes="false" dry="false" arg
+  while [ $# -gt 0 ]; do
+    arg="$1"; shift || true
+    case "$arg" in
+      --yes|-y) yes="true" ;;
+      --data|--purge) remove_data="true" ;;
+      --keep-data) remove_data="false" ;;
+      --volumes|-v) remove_volumes="true" ;;
+      --dry-run|--dry) dry="true" ;;
+      --dir)
+        [ $# -gt 0 ] || { uninstall_usage; return 1; }
+        STACK_DIR="${1/#\~/$HOME}"; shift || true ;;
+      --help|-h) uninstall_usage; return 0 ;;
+      *) printf '%s: %s\n' "$(t un_unknown)" "$arg"; uninstall_usage; return 1 ;;
+    esac
+  done
+
   load_config || { echo "$(t no_env)"; return 1; }
   ensure_path_brew
   printf '\n%s%s%s\n  %s\n' "$C_RED$C_B" "$(t un_warn)" "$C_RESET" "$STACK_DIR"
-  confirm "$(t un_confirm)" 'N' || { echo "$(t cancelled)"; return 0; }
-  local rmvol=""; confirm "$(t q_rm_volumes)" 'N' && rmvol="-v"
-  # shellcheck disable=SC2086
-  compose down $rmvol --remove-orphans >/dev/null 2>&1 || true
-  vault_seal   # stop the secrets daemon (wipes its RAM)
-  docker rm -f "${SAFE_STACK_NAME}-wg-bridge" >/dev/null 2>&1 || true
-  remove_legacy_command_links
-  local d; for d in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" "$HOME/bin"; do
-    [ -L "$d/$MGMT_NAME" ] && rm -f "$d/$MGMT_NAME" 2>/dev/null || true
-  done
-  cron_remove >/dev/null 2>&1 || true
-  watchdog_disable >/dev/null 2>&1 || true
-  rm -f "$(seal_keyfile)" 2>/dev/null || true
-  if confirm "$(t un_data)" 'N'; then rm -rf "$STACK_DIR" 2>/dev/null || true; printf '%s%s%s\n' "$C_GREEN" "$(t un_done)" "$C_RESET"
-  else printf '%s %s%s%s\n' "$(t un_kept)" "$C_B" "$STACK_DIR" "$C_RESET"; fi
+  if [ "$yes" != "true" ]; then
+    confirm "$(t un_confirm)" 'N' || { echo "$(t cancelled)"; return 0; }
+    [ "$remove_volumes" = "true" ] || { confirm "$(t q_rm_volumes)" 'N' && remove_volumes="true"; }
+    [ "$remove_data" = "true" ] || { confirm "$(t un_data)" 'N' && remove_data="true"; }
+  fi
+
+  [ "$dry" = "true" ] && printf '  %s%s%s\n' "$C_YELLOW" "$(t un_dry)" "$C_RESET"
+  uninstall_compose_down "$dry" "$remove_volumes"
+  uninstall_note "$(t un_runtime)"
+  if [ "$dry" != "true" ]; then
+    shred_runtime_env
+    vault_seal   # stop the secrets daemon (wipes its RAM)
+    docker rm -f "${SAFE_STACK_NAME}-wg-bridge" >/dev/null 2>&1 || true
+    iso_active && iso_wg_down
+  fi
+
+  uninstall_note "$(t un_hosts)"
+  [ "$dry" = "true" ] || remove_hosts_entries
+  uninstall_note "$(t un_links)"
+  uninstall_command_links "$dry"
+  uninstall_note "$(t un_cron)"
+  [ "$dry" = "true" ] || cron_remove >/dev/null 2>&1 || true
+  uninstall_note "$(t un_watchdog)"
+  [ "$dry" = "true" ] || watchdog_disable >/dev/null 2>&1 || true
+  uninstall_note "$(t un_seal)"
+  [ "$dry" = "true" ] || rm -f "$(seal_keyfile)" 2>/dev/null || true
+
+  if [ "$remove_data" = "true" ]; then
+    uninstall_note "$(t un_data_rm)"
+    [ "$dry" = "true" ] || rm -rf "$STACK_DIR" 2>/dev/null || true
+    printf '%s%s%s\n' "$C_GREEN" "$(t un_done)" "$C_RESET"
+  else
+    printf '%s %s%s%s\n' "$(t un_kept)" "$C_B" "$STACK_DIR" "$C_RESET"
+  fi
 }
 
 update_rebuild() {
