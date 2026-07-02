@@ -19,7 +19,7 @@
 **Self-hosted AI-стек для macOS и Linux: локальная или публичная установка, Docker runtime, локальные модели, агенты, RAG, память, egress-маршрутизация и хранилище секретов.**
 
 <p align="center">
-  <img src="docs/img/dashboard.svg" alt="дашборд psai - максимальный стек на Linux" width="560">
+  <img src="docs/img/dashboard.svg?v=1.0.3" alt="дашборд psai - максимальный стек на Linux" width="560">
 </p>
 
 ## Компоненты
