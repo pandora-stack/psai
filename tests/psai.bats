@@ -81,7 +81,7 @@ setup() {
   STACK_NAME=psai NODE_MODE=single DEPLOY_PROFILE=local PSAI_DOMAIN=psai.lan SECURITY_PROFILE=default
   run render_context
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Status: psai · single · local · psai.lan"* ]]
+  [[ "$output" == *"Status: single · local · psai.lan"* ]]
   [[ "$output" == *"Security profile: default"* ]]
   [[ "$output" != *"v$STACK_VERSION"* ]]
   [[ "$output" != *"domain:"* ]]

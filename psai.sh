@@ -368,9 +368,9 @@ banner_stack() {
 render_context() {
   local prof="${DEPLOY_PROFILE:-local}" dom security="${SECURITY_PROFILE:-default}"
   if [ "$prof" = "public" ] && [ -n "${PUBLIC_DOMAIN:-}" ]; then dom="$PUBLIC_DOMAIN"; else dom="${PSAI_DOMAIN:-${DOMAIN_ZONE:-lan}}"; fi
-  printf '  %sStatus:%s %s%s · %s · %s · %s%s\n' \
-    "$C_DIM" "$C_RESET" "$C_B" "${STACK_NAME:-$DEFAULT_STACK_NAME}" "${NODE_MODE:-single}" "$prof" "$dom" "$C_RESET"
-  printf '  %s%s:%s %s%s%s\n' "$C_DIM" "$(t sec_q)" "$C_RESET" "$C_B" "$security" "$C_RESET"
+  printf '  %sStatus:%s %s%s · %s · %s%s\n' \
+    "$C_DIM" "$C_RESET" "$C_B" "${NODE_MODE:-single}" "$prof" "$dom" "$C_RESET"
+  printf '  %s%s:%s %s%s%s\n' "$C_DIM" "$(t sec_profile_label)" "$C_RESET" "$C_B" "$security" "$C_RESET"
   return 0
 }
 # ───────────────────────────── colours / tty ─────────────────────────────
@@ -497,6 +497,7 @@ t() {
       # step 4 — security
       step4_title)    printf 'Шаг 4 · Профиль безопасности';;
       sec_q)          printf 'Безопасность';;
+      sec_profile_label) printf 'Профиль безопасности';;
       sec_strict)     printf 'Строгий';;
       sec_default)    printf 'Обычный';;
       sec_none)       printf 'Нет';;
@@ -766,6 +767,7 @@ t() {
       git_note)       printf 'Forgejo: sign in after install and finish setup (first login = admin).';;
       step4_title)    printf 'Step 4 · Security profile';;
       sec_q)          printf 'Security';;
+      sec_profile_label) printf 'Security profile';;
       sec_strict)     printf 'Strict';;
       sec_default)    printf 'Default';;
       sec_none)       printf 'None';;

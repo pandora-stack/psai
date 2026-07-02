@@ -122,6 +122,7 @@ t() {
       # step 4 — security
       step4_title)    printf 'Шаг 4 · Профиль безопасности';;
       sec_q)          printf 'Безопасность';;
+      sec_profile_label) printf 'Профиль безопасности';;
       sec_strict)     printf 'Строгий';;
       sec_default)    printf 'Обычный';;
       sec_none)       printf 'Нет';;
@@ -391,6 +392,7 @@ t() {
       git_note)       printf 'Forgejo: sign in after install and finish setup (first login = admin).';;
       step4_title)    printf 'Step 4 · Security profile';;
       sec_q)          printf 'Security';;
+      sec_profile_label) printf 'Security profile';;
       sec_strict)     printf 'Strict';;
       sec_default)    printf 'Default';;
       sec_none)       printf 'None';;

@@ -19,7 +19,7 @@
 **Self-hosted AI stack for macOS and Linux with local or public install profiles, Docker runtime, local models, agents, RAG, memory, egress routing, and a hardened secret store.**
 
 <p align="center">
-  <img src="docs/img/dashboard.svg?v=1.0.3" alt="psai dashboard - maximal stack on Linux" width="560">
+  <img src="docs/img/dashboard-status.svg" alt="psai dashboard - maximal stack on Linux" width="560">
 </p>
 
 ## Components
@@ -87,7 +87,7 @@ cd psai && ./psai.sh install
 After install, run `psai` to open the dashboard.
 
 ```text
-Status: psai · single · local · psai.lan
+Status: single · local · psai.lan
 Security profile: default
 ```
 
