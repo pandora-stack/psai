@@ -595,7 +595,7 @@ append_mcp_service() {
 
   mcp:
     build: ../mcp
-    image: ${SAFE_STACK_NAME}-mcp:1.0.0
+    image: ${SAFE_STACK_NAME}-mcp:1.0.1
     container_name: ${SAFE_STACK_NAME}-mcp
     restart: unless-stopped
     security_opt: [ "no-new-privileges:true" ]
@@ -721,7 +721,7 @@ def search(query, limit=5):
 class Handler(BaseHTTPRequestHandler):
     OPENAPI = {
         "openapi": "3.1.0",
-        "info": {"title": "psai MCP", "version": "1.0.0"},
+        "info": {"title": "psai MCP", "version": "1.0.1"},
         "paths": {
             "/memory_store": {"post": {
                 "operationId": "memory_store", "summary": "Store text in shared memory (Qdrant)",
@@ -808,7 +808,7 @@ append_pentest_service() {
 
   pentest:
     build: ../pentest
-    image: ${SAFE_STACK_NAME}-pentest:1.0.0
+    image: ${SAFE_STACK_NAME}-pentest:1.0.1
     container_name: ${SAFE_STACK_NAME}-pentest
     restart: unless-stopped
     cap_drop: [ ALL ]

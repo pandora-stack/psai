@@ -4,7 +4,7 @@
   <b>English</b> | <a href="ARCHITECTURE.ru.md">Русский</a>
 </p>
 
-`v1.0.0 beta`. `psai.sh` is one bash script, assembled from `lib/*.sh` by `build.sh`. Secrets are handled by a small Rust daemon, **stack-vault** (`vault/`).
+`v1.0.1 beta`. `psai.sh` is one bash script, assembled from `lib/*.sh` by `build.sh`. Secrets are handled by a small Rust daemon, **stack-vault** (`vault/`).
 
 ## Components
 
@@ -54,7 +54,7 @@ Ports: Open WebUI `:8080`, OpenHands `:3000`, SearXNG `:8080`, Forgejo `:3000` (
 
 **Hardware-fingerprint binding.** The token alone doesn't stop a disk clone. Copy the agent's disk - token and WireGuard key - onto another VPS, and while the tunnel is up it could ask for the key. So the KMS vault also binds each agent to a hardware fingerprint. At provisioning it reads the agent's fingerprint (`stack-vault fingerprint`) and stores it as `agent_fp_<id>`. The fingerprint is a SHA-256 over IDs a raw disk image doesn't carry - mainly the SMBIOS/DMI **product UUID**, which the hypervisor assigns per VM, plus `machine-id` and the CPU model. Every unseal request carries `GET <id> <token> <fp>`, and the KMS refuses it (`ERR denied-hwid`) unless the fingerprint matches. A clone booted on different hardware gets a different UUID, a different fingerprint, and is denied. Caveat: strong binding needs the agent's vault to read `product_uuid`, which is root-only; without that it falls back to `machine-id`, which binds to the OS install, not the hardware. A real hardware change (VPS migration) also changes the fingerprint and means re-registering.
 
-What this does and doesn't do: key custody sits in the KMS vault, which can be offline and can later revoke or rotate keys, and the fingerprint stops a plain disk clone on other hardware. It does not stop someone running code on the live agent - host-root there reads the unsealed RAM either way. Running the KMS vault on its own node is implemented as a first cut (it peers into the fleet WireGuard at `.254`, hub-and-spoke through the master); a three-host live test is still pending. The KMS and fingerprint protocol is tested end-to-end.
+What this does and doesn't do: key custody sits in the KMS vault, which can be offline and can later revoke or rotate keys, and the fingerprint stops a plain disk clone on other hardware. It does not stop someone running code on the live agent - host-root there reads the unsealed RAM either way. Running the KMS vault on its own node is implemented as a first cut (it peers into the fleet WireGuard at `.254`, hub-and-spoke through the master); a three-host live test is still pending. The KMS and fingerprint protocol is tested end-to-end, and `cargo test` covers the vault's SHA-256 fingerprint hash (FIPS 180-4 known-answer vectors) and the on-disk blob's serialize/deserialize round-trip.
 
 ## Egress proxies - firewall + router
 

@@ -5,7 +5,7 @@
 <h1 align="center">Pandora AI Stack</h1>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-v1.0.0-0969da">
+  <img alt="version" src="https://img.shields.io/badge/version-v1.0.1-0969da">
   <img alt="channel" src="https://img.shields.io/badge/channel-beta-0969da">
   <img alt="release" src="https://img.shields.io/badge/release-github-0969da">
 </p>
@@ -158,10 +158,21 @@ The image manifest (default tags, not digest pins) lives in `versions.json`. Sel
 
 ## Build and Tests
 
+Installer (bash):
+
 ```bash
 ./build.sh
 shellcheck -S warning psai.sh
 bats tests/
+```
+
+Secret store (`stack-vault`, Rust):
+
+```bash
+cd vault
+cargo build --release
+cargo test          # sha256 known-answer + blob serialize/deserialize round-trip
+cargo clippy --all-targets -- -D warnings
 ```
 
 ## Documentation

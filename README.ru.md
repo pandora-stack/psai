@@ -5,7 +5,7 @@
 <h1 align="center">Pandora AI Stack</h1>
 
 <p align="center">
-  <img alt="версия" src="https://img.shields.io/badge/версия-v1.0.0-0969da">
+  <img alt="версия" src="https://img.shields.io/badge/версия-v1.0.1-0969da">
   <img alt="канал" src="https://img.shields.io/badge/канал-beta-0969da">
   <img alt="релиз" src="https://img.shields.io/badge/релиз-github-0969da">
 </p>
@@ -158,10 +158,21 @@ psai --lang ru|en            --version | help
 
 ## Сборка и Тесты
 
+Установщик (bash):
+
 ```bash
 ./build.sh
 shellcheck -S warning psai.sh
 bats tests/
+```
+
+Хранилище секретов (`stack-vault`, Rust):
+
+```bash
+cd vault
+cargo build --release
+cargo test          # sha256 known-answer + round-trip сериализации blob
+cargo clippy --all-targets -- -D warnings
 ```
 
 ## Документация

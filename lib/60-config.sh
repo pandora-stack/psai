@@ -26,6 +26,7 @@ load_config() {
   : "${LOG_RETENTION:=6m}"; : "${TLS_MODE:=le}"; : "${OWN_CERT_PATH:=}"; : "${OWN_KEY_PATH:=}"
   : "${PUBLIC_DOMAIN:=}"; : "${ACME_EMAIL:=}"; : "${ENABLE_FAIL2BAN:=false}"
   : "${ISOLATE_AGENTS:=false}"; : "${ISOLATE_GIT:=false}"; : "${SHARED_MEMORY:=false}"
+  : "${KMS_HOST:=}"; : "${KMS_SSH_USER:=}"; : "${KMS_SSH_KEY:=}"
   : "${QDRANT_DOMAIN:=}"; : "${OPENHANDS_LLM_MODEL:=}"
   # Backfill NO_DOMAIN (added later): if it was never persisted, infer it from the saved
   # zone — a no-domain install records DOMAIN_ZONE=localhost. Prevents a rebuild from
@@ -150,6 +151,9 @@ save_config() {
     kv RA_USER "$RA_USER"
     kv REMOTE_WG_NET "$REMOTE_WG_NET"
     kv REMOTE_WG_PORT "$REMOTE_WG_PORT"
+    kv KMS_HOST "$KMS_HOST"
+    kv KMS_SSH_USER "$KMS_SSH_USER"
+    kv KMS_SSH_KEY "$KMS_SSH_KEY"
     kv OPENHANDS_IMAGE "$OPENHANDS_IMAGE"
   } > "$STACK_DIR/.stack.env"
   chmod 600 "$STACK_DIR/.stack.env" 2>/dev/null || true

@@ -1,6 +1,6 @@
 [package]
 name = "stack-vault"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 description = "psai in-memory secrets daemon (Vault-style): secrets live in mlock'd RAM, served over a peer-credential-gated Unix socket; only an AES-256-GCM blob touches disk."
 

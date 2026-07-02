@@ -35,6 +35,9 @@ jobs:
       - name: Build stack-vault
         run: cargo build --release
 
+      - name: Unit tests (sha256 KAT + blob round-trip)
+        run: cargo test
+
       - name: Smoke test the vault
         run: |
           BIN=target/release/stack-vault

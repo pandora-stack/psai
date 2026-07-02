@@ -318,8 +318,21 @@ fn write_blob(path: &str, pass: &[u8], store: &Store) -> R<()> {
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&ct);
     let tmp = format!("{path}.tmp");
-    std::fs::write(&tmp, &out).map_err(|e| format!("write blob: {e}"))?;
-    set_mode_600(&tmp);
+    // Create the temp blob 0600 from the start. std::fs::write + a later chmod leaves a
+    // brief window where the (encrypted) blob is world-readable under the default umask;
+    // creating with the mode closes it.
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| format!("write blob: {e}"))?;
+        f.write_all(&out).map_err(|e| format!("write blob: {e}"))?;
+    }
+    set_mode_600(&tmp); // no-op if it already existed 0600; fixes perms on a reused tmp
     std::fs::rename(&tmp, path).map_err(|e| format!("rename blob: {e}"))?;
     Ok(())
 }
@@ -820,17 +833,15 @@ fn cmd_kms(args: &[String]) -> R<()> {
     let vsock = sock_path(args)?;
     let listener = TcpListener::bind(&listen).map_err(|e| format!("bind {listen}: {e}"))?;
     eprintln!("stack-vault kms: serving on {listen} (vault {vsock})");
-    for conn in listener.incoming() {
-        if let Ok(stream) = conn {
-            let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
-            let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
-            // One thread per connection so a slow/stalled peer can't block unseal for every
-            // other agent (the read timeout bounds each one regardless).
-            let vsock = vsock.clone();
-            std::thread::spawn(move || {
-                let _ = handle_kms(stream, &vsock);
-            });
-        }
+    for stream in listener.incoming().flatten() {
+        let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
+        let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
+        // One thread per connection so a slow/stalled peer can't block unseal for every
+        // other agent (the read timeout bounds each one regardless).
+        let vsock = vsock.clone();
+        std::thread::spawn(move || {
+            let _ = handle_kms(stream, &vsock);
+        });
     }
     Ok(())
 }
@@ -898,5 +909,66 @@ fn kms_fetch(addr: &str, id: &str, token: &str) -> R<Zeroizing<Vec<u8>>> {
             B64.decode(b64.trim()).map_err(|_| "kms b64")?,
         )),
         None => Err(format!("kms unseal: {resp}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    // The hand-rolled SHA-256 backs the hardware fingerprint (KMS anti-clone binding); a
+    // subtle bug would silently change every fingerprint. Pin it to the FIPS 180-4 vectors.
+    #[test]
+    fn sha256_known_answers() {
+        assert_eq!(
+            hex(&sha256(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            hex(&sha256(b"")),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        // Multi-block input (>55 bytes) exercises the padding + second compression block.
+        assert_eq!(
+            hex(&sha256(
+                b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+            )),
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
+    }
+
+    // The on-disk blob is `key\tbase64(value)\n` per record; base64 keeps binary/newline
+    // values intact. Guard the serialize/deserialize contract the vault persists through.
+    #[test]
+    fn store_roundtrip_preserves_values() {
+        let mut store = Store::new();
+        store.insert("alpha".into(), SecretBytes::new(b"one".to_vec()));
+        store.insert(
+            "beta".into(),
+            SecretBytes::new(b"two\nwith-newline\tand-tab".to_vec()),
+        );
+        store.insert("empty".into(), SecretBytes::new(Vec::new()));
+
+        let back = deserialize(&serialize(&store)).expect("deserialize");
+        assert_eq!(back.len(), 3);
+        assert_eq!(back.get("alpha").unwrap().as_slice(), b"one");
+        assert_eq!(
+            back.get("beta").unwrap().as_slice(),
+            b"two\nwith-newline\tand-tab"
+        );
+        assert_eq!(back.get("empty").unwrap().as_slice(), b"");
+    }
+
+    // ct_eq must be a true equality check (constant-time is a timing property, not tested here).
+    #[test]
+    fn ct_eq_matches_string_equality() {
+        assert!(ct_eq("token-abc", "token-abc"));
+        assert!(!ct_eq("token-abc", "token-abd"));
+        assert!(!ct_eq("token-abc", "token-abc-longer"));
+        assert!(ct_eq("", ""));
     }
 }
