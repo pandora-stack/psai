@@ -41,6 +41,16 @@ read_secret_confirmed() {
   done
 }
 
+# Read one non-empty secret without echo and assign it to the named variable.
+read_secret_once() {
+  local __var="$1" __label="$2" __p
+  while true; do
+    printf '  %s: ' "$__label"; stty -echo 2>/dev/null; IFS= read -r __p || true; stty echo 2>/dev/null; printf '\n'
+    if [ -n "$__p" ]; then printf -v "$__var" '%s' "$__p"; return 0; fi
+    printf '  %s%s%s\n' "$C_YELLOW" "$(t pw_empty)" "$C_RESET"
+  done
+}
+
 pause() {
   is_interactive || return 0
   printf '\n%s ' "$(t press_enter)" >&2
@@ -93,6 +103,13 @@ vwidth() {
   b=$(printf '%s' "$s" | LC_ALL=C wc -c); b="${b//[[:space:]]/}"
   cont=$(printf '%s' "$s" | LC_ALL=C tr -dc $'\200-\277' | wc -c); cont="${cont//[[:space:]]/}"
   printf '%d' $(( b - cont ))
+}
+
+pad_right() {
+  local s="$1" w="$2" pad
+  pad=$(( w - $(vwidth "$s") ))
+  [ "$pad" -lt 1 ] && pad=1
+  printf '%s%*s' "$s" "$pad" ''
 }
 
 # inline_opt key label -> "[key] label" with a cyan key. No newline.

@@ -28,6 +28,8 @@ load_config() {
   : "${ISOLATE_AGENTS:=false}"; : "${ISOLATE_GIT:=false}"; : "${SHARED_MEMORY:=false}"
   : "${KMS_HOST:=}"; : "${KMS_SSH_USER:=}"; : "${KMS_SSH_KEY:=}"
   : "${QDRANT_DOMAIN:=}"; : "${OPENHANDS_LLM_MODEL:=}"
+  : "${PORT_PSAI:=${PSAI_PORT_PSAI:-8080}}"; : "${PORT_AGENTS:=${PSAI_PORT_AGENTS:-8081}}"
+  : "${PORT_GIT:=${PSAI_PORT_GIT:-8082}}"; : "${PORT_QDRANT:=${PSAI_PORT_QDRANT:-8083}}"
   # Backfill NO_DOMAIN (added later): if it was never persisted, infer it from the saved
   # zone — a no-domain install records DOMAIN_ZONE=localhost. Prevents a rebuild from
   # silently switching a localhost-ports stack back to a domain/80/443 Caddy.
@@ -63,6 +65,10 @@ save_config() {
     kv SAFE_STACK_NAME "$SAFE_STACK_NAME"
     kv STACK_DIR "$STACK_DIR"
     kv ADMIN_USER "$ADMIN_USER"
+    kv PORT_PSAI "$PORT_PSAI"
+    kv PORT_AGENTS "$PORT_AGENTS"
+    kv PORT_GIT "$PORT_GIT"
+    kv PORT_QDRANT "$PORT_QDRANT"
     kv ENABLE_OPENWEBUI "$ENABLE_OPENWEBUI"
     kv ENABLE_AGENTS "$ENABLE_AGENTS"
     kv ENABLE_SEARCH "$ENABLE_SEARCH"
@@ -111,6 +117,7 @@ save_config() {
     kv SEAL_MODE "$SEAL_MODE"
     kv EGRESS_STACK "$EGRESS_STACK"
     kv EGRESS_WEB "$EGRESS_WEB"
+    kv EG_HOST_WEB_PORT "$EG_HOST_WEB_PORT"
     kv STACK_VIA_PROXY "$STACK_VIA_PROXY"
     kv WEB_VIA_PROXY "$WEB_VIA_PROXY"
     kv ROUTE_LOCAL_LLM "$ROUTE_LOCAL_LLM"
@@ -226,31 +233,63 @@ prepare_dirs_and_secrets() {
     "$STACK_DIR/openhands-sandbox" "$STACK_DIR/openhands-config" "$STACK_DIR/mcp"
   chmod 700 "$STACK_DIR/secrets" 2>/dev/null || true
   chmod 1777 "$STACK_DIR/data/ingest/tmp" 2>/dev/null || true
-  # Caddy basic-auth creds are typed into a browser prompt → generate them alphanumeric
+  # Browser-facing basic-auth creds are typed into a prompt → generate them alphanumeric
   # (admin_pw_gen) so they're typeable; app-account secrets stay full-entropy base64.
   secret_get searxng_secret searxng_secret_gen >/dev/null
-  [ "$ENABLE_AGENTS"   = "true" ] && secret_get agents_basic_auth admin_pw_gen >/dev/null
-  [ "$ENABLE_OPENWEBUI" = "true" ] && secret_get webui_basic_auth admin_pw_gen >/dev/null
-  [ "$ENABLE_QDRANT"   = "true" ] && secret_get qdrant_basic_auth admin_pw_gen >/dev/null
   [ "$ENABLE_GIT"      = "true" ] && secret_get forgejo_admin     >/dev/null
   ollama_enabled && secret_get ollama_api_key api_key_gen >/dev/null
-  # If the operator chose their own admin password, make it the actual basic-auth gate for
-  # the web UIs (Open WebUI/OpenHands/Qdrant) instead of a generated one. It overwrites the
-  # generated basic_auth secret in the same store (the vault when sealed) — never written
-  # in plaintext next to the config. Without this the chosen password was collected and
-  # silently dropped.
+
+  # One credential gates protected browser UIs. Open WebUI itself bootstraps its first admin
+  # through the browser; only public deployments get a Caddy gate in front of it.
+  local admin_pass=""
   if [ -n "${ADMIN_PASSWORD_PLAIN:-}" ]; then
-    [ "$ENABLE_OPENWEBUI" = "true" ] && printf '%s' "$ADMIN_PASSWORD_PLAIN" | secret_set webui_basic_auth
-    [ "$ENABLE_AGENTS"    = "true" ] && printf '%s' "$ADMIN_PASSWORD_PLAIN" | secret_set agents_basic_auth
-    [ "$ENABLE_QDRANT"    = "true" ] && printf '%s' "$ADMIN_PASSWORD_PLAIN" | secret_set qdrant_basic_auth
+    admin_pass="$ADMIN_PASSWORD_PLAIN"
+    printf '%s' "$admin_pass" | secret_set admin_basic_auth
+  elif { [ "$ENABLE_OPENWEBUI" = "true" ] && [ "$DEPLOY_PROFILE" = "public" ]; } || [ "$ENABLE_AGENTS" = "true" ] || [ "$ENABLE_QDRANT" = "true" ]; then
+    admin_pass="$(secret_get admin_basic_auth admin_pw_gen)"
+  fi
+  if [ -n "$admin_pass" ]; then
+    [ "$ENABLE_OPENWEBUI" = "true" ] && [ "$DEPLOY_PROFILE" = "public" ] && printf '%s' "$admin_pass" | secret_set webui_basic_auth
+    [ "$ENABLE_AGENTS"    = "true" ] && printf '%s' "$admin_pass" | secret_set agents_basic_auth
+    [ "$ENABLE_QDRANT"    = "true" ] && printf '%s' "$admin_pass" | secret_set qdrant_basic_auth
   fi
   return 0
 }
 
-# Open WebUI CORS / allowed origins (used by some integrations).
+append_origin() {
+  local list="$1" origin="$2"
+  [ -z "$origin" ] && { printf '%s' "$list"; return 0; }
+  [ -z "$list" ] && printf '%s' "$origin" || printf '%s;%s' "$list" "$origin"
+}
+
+# Open WebUI CORS / allowed origins. Open WebUI expects semicolon-separated origins.
 build_allowed_origins() {
-  local origins="https://$PSAI_DOMAIN,http://localhost,http://127.0.0.1"
-  [ "$ENABLE_AGENTS" = "true" ] && origins="$origins,https://$AGENTS_DOMAIN"
-  [ "$ENABLE_GIT" = "true" ] && origins="$origins,https://$GIT_DOMAIN"
+  local origins="" ip
+  ip="$(host_ip)"
+  if no_domain; then
+    origins="$(append_origin "$origins" "http://localhost:$PORT_PSAI")"
+    origins="$(append_origin "$origins" "http://127.0.0.1:$PORT_PSAI")"
+    [ "$ip" != "n/a" ] && origins="$(append_origin "$origins" "http://$ip:$PORT_PSAI")"
+  elif caddy_use_self; then
+    [ "$ip" != "n/a" ] && origins="$(append_origin "$origins" "https://$ip")"
+    origins="$(append_origin "$origins" "https://localhost")"
+  else
+    origins="$(append_origin "$origins" "https://$PSAI_DOMAIN")"
+    [ "$DEPLOY_PROFILE" != "public" ] && origins="$(append_origin "$origins" "https://localhost")"
+    [ "$DEPLOY_PROFILE" != "public" ] && origins="$(append_origin "$origins" "http://localhost:$PORT_PSAI")"
+    [ "$DEPLOY_PROFILE" != "public" ] && origins="$(append_origin "$origins" "http://127.0.0.1:$PORT_PSAI")"
+  fi
+  [ "$ENABLE_AGENTS" = "true" ] && [ -n "${AGENTS_DOMAIN:-}" ] && origins="$(append_origin "$origins" "https://$AGENTS_DOMAIN")"
+  [ "$ENABLE_GIT" = "true" ] && [ -n "${GIT_DOMAIN:-}" ] && origins="$(append_origin "$origins" "https://$GIT_DOMAIN")"
   printf '%s' "$origins"
+}
+
+openwebui_cookie_secure() {
+  no_domain && printf 'false' || printf 'true'
+}
+
+openwebui_url() {
+  if no_domain; then printf 'http://localhost:%s' "$PORT_PSAI"
+  elif caddy_use_self; then printf 'https://%s' "$(host_ip)"
+  else printf 'https://%s' "$PSAI_DOMAIN"; fi
 }

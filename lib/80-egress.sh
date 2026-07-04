@@ -1,18 +1,36 @@
 # ───────────────────────────── egress proxies ─────────────────────────────
-# Two independent HTTP-proxy gateways, both default 'none' (DIRECT):
+# Two independent HTTP-proxy gateways, both default 'none' (direct egress):
 #   proxy-stack : the apps' LLM API egress (cloud + local) + component pulls.
 #                 Internal-only — apps reach it by name (proxy-stack:<port>).
 #   proxy-web   : the web worker — search + the OpenHands sandbox's browsing.
 #                 Published on host loopback so the sandbox (separate net) can reach it.
-# Modes: tor | vless use an HTTP listener on 8118; wireguard/adguardvpn/tailscale
-# tunnel via a tinyproxy sidecar on 8888 that shares the tunnel container's netns.
+# Modes: none runs direct tinyproxy on 8888; tor | vless use an HTTP listener on 8118;
+# wireguard/adguardvpn/tailscale tunnel via a tinyproxy sidecar on 8888 that shares
+# the tunnel container's netns.
 
-egress_stack_enabled() { [ -n "${EGRESS_STACK:-}" ] && [ "$EGRESS_STACK" != "none" ]; }
-egress_web_enabled()   { [ -n "${EGRESS_WEB:-}" ]   && [ "$EGRESS_WEB" != "none" ]; }
+egress_stack_enabled() { [ -n "${EGRESS_STACK:-none}" ]; }
+egress_web_enabled()   { [ -n "${EGRESS_WEB:-none}" ]; }
 stack_via_proxy() { [ "${STACK_VIA_PROXY:-true}" = "true" ]; }
 web_via_proxy()   { [ "${WEB_VIA_PROXY:-true}"   = "true" ]; }
 
 eg_mode_port() { case "$1" in tor|vless) printf '8118' ;; *) printf '8888' ;; esac; }
+
+docker_proxy_platform() {
+  if [ -n "${PROXY_PLATFORM:-}" ]; then printf '%s' "$PROXY_PLATFORM"; return 0; fi
+  detect_arch 2>/dev/null || true
+  case "${ARCH_TYPE:-}" in
+    arm64) printf 'linux/arm64' ;;
+    x64)   printf 'linux/amd64' ;;
+    *)     return 0 ;;
+  esac
+}
+
+proxy_platform_line() {
+  local platform
+  platform="$(docker_proxy_platform)"
+  [ -n "$platform" ] && printf '    platform: %s\n' "$platform"
+  return 0
+}
 
 # Host bind address for proxy-web's published port. The OpenHands sandbox is a SEPARATE
 # container that reaches the proxy via host.docker.internal. On Docker Desktop (macOS/
@@ -29,7 +47,24 @@ eg_web_bind() {
   printf '127.0.0.1'
 }
 
+eg_web_port_busy() {
+  local p="$1" bind
+  bind="$(eg_web_bind)"
+  if command_exists lsof; then lsof -nP -iTCP@"$bind":"$p" -sTCP:LISTEN >/dev/null 2>&1
+  else nc -z "$bind" "$p" >/dev/null 2>&1; fi
+}
+
+resolve_eg_host_web_port() {
+  egress_web_enabled || return 0
+  [ -n "${PSAI_EG_HOST_WEB_PORT:-}" ] && return 0
+  docker inspect "${SAFE_STACK_NAME:-$DEFAULT_STACK_NAME}-proxy-web" >/dev/null 2>&1 && return 0
+  local p="${EG_HOST_WEB_PORT:-18118}" limit=18218
+  while eg_web_port_busy "$p" && [ "$p" -lt "$limit" ]; do p=$((p + 1)); done
+  EG_HOST_WEB_PORT="$p"
+}
+
 compute_egress_endpoints() {
+  resolve_eg_host_web_port
   EGRESS_STACK_HTTP=""; EGRESS_WEB_HTTP=""; EG_SANDBOX_HTTP=""
   egress_stack_enabled && EGRESS_STACK_HTTP="http://proxy-stack:$(eg_mode_port "$EGRESS_STACK")"
   if egress_web_enabled; then
@@ -238,20 +273,33 @@ append_proxy_service() {
     web)   name="proxy-web";   mode="$EGRESS_WEB";   dir="../gateway-web";   hostport="$EG_HOST_WEB_PORT" ;;
     *) return 0 ;;
   esac
-  [ "$mode" != "none" ] || return 0
   # NOTE: proxy-stack stays on the default app network only. It is deliberately NOT joined
   # to ollama-private: bridging it there would give app containers a forward-proxy hop to
   # raw Ollama. Pulling models through the proxy is handled by the one-shot ollama-pull
   # (see append_ollama_service), which runs on the app network instead.
   local iport; iport="$(eg_mode_port "$mode")"; local sc="${name}-http"
+  local platform_line; platform_line="$(proxy_platform_line)"
   local ports=""; [ -n "$hostport" ] && ports="    ports:
       - \"$(eg_web_bind):${hostport}:${iport}\""
   case "$mode" in
+    none)
+      cat >> "$f" <<EOF
+
+  $name:
+    image: $HTTP_SIDECAR_IMAGE
+$platform_line
+    container_name: ${SAFE_STACK_NAME}-$name
+    restart: unless-stopped
+$ports
+$nets
+EOF
+      ;;
     tor)
       cat >> "$f" <<EOF
 
   $name:
     image: $TOR_IMAGE
+$platform_line
     container_name: ${SAFE_STACK_NAME}-$name
     restart: unless-stopped
 $ports
@@ -263,6 +311,7 @@ EOF
 
   $name:
     image: $XRAY_IMAGE
+$platform_line
     container_name: ${SAFE_STACK_NAME}-$name
     restart: unless-stopped
     command: ["run", "-c", "/etc/xray/config.json"]
@@ -277,6 +326,7 @@ EOF
 
   $name:
     image: $WIREGUARD_IMAGE
+$platform_line
     container_name: ${SAFE_STACK_NAME}-$name
     restart: unless-stopped
     cap_add: [NET_ADMIN, SYS_MODULE]
@@ -289,9 +339,9 @@ $nets
 
   $sc:
     image: $HTTP_SIDECAR_IMAGE
+$platform_line
     container_name: ${SAFE_STACK_NAME}-$sc
     restart: unless-stopped
-    command: ["ANY"]
     network_mode: "service:$name"
     depends_on: [$name]
 EOF
@@ -301,6 +351,7 @@ EOF
 
   $name:
     image: $ADGUARDVPN_IMAGE
+$platform_line
     container_name: ${SAFE_STACK_NAME}-$name
     restart: unless-stopped
     cap_add: [NET_ADMIN]
@@ -313,9 +364,9 @@ $nets
 
   $sc:
     image: $HTTP_SIDECAR_IMAGE
+$platform_line
     container_name: ${SAFE_STACK_NAME}-$sc
     restart: unless-stopped
-    command: ["ANY"]
     network_mode: "service:$name"
     depends_on: [$name]
 EOF
@@ -325,6 +376,7 @@ EOF
 
   $name:
     image: $TAILSCALE_IMAGE
+$platform_line
     container_name: ${SAFE_STACK_NAME}-$name
     restart: unless-stopped
     cap_add: [NET_ADMIN, SYS_MODULE]
@@ -342,9 +394,9 @@ $nets
 
   $sc:
     image: $HTTP_SIDECAR_IMAGE
+$platform_line
     container_name: ${SAFE_STACK_NAME}-$sc
     restart: unless-stopped
-    command: ["ANY"]
     network_mode: "service:$name"
     depends_on: [$name]
 EOF
@@ -355,8 +407,12 @@ EOF
 # ── install-time prompts ──────────────────────────────────────────────────────
 choose_egress_slot() {
   local slot="$1" def="$2" c
-  menu_line "$(t px_mode)" 0 "$(t px_none)" 1 "$(t px_tor)" 2 "$(t px_wireguard)" 3 "$(t px_vless)"
+  local old_w="$MENU_OPT_W"
+  MENU_OPT_W=26
+  menu_line "$(t px_mode)" 0 "$(t px_none)" 1 "$(t px_tor)"
+  menu_line "" 2 "$(t px_wireguard)" 3 "$(t px_vless)"
   menu_line "" 4 "$(t px_adguard)" 5 "$(t px_tailscale)"
+  MENU_OPT_W="$old_w"
   c="$(ask "$(t px_pick)" "$def")"
   local mode
   case "$(printf '%s' "$c" | tr -d '[][:space:]' | tr 'A-Z' 'a-z')" in
@@ -367,17 +423,17 @@ choose_egress_slot() {
   case "$slot" in stack) EGRESS_STACK="$mode" ;; web) EGRESS_WEB="$mode" ;; esac
 }
 
-# Both proxies are OFFERED at install; default DIRECT (none). Presets when enabled:
-# proxy-stack → Tor, proxy-web → WireGuard.
+# Both proxies are offered at install; default is DIRECT through the proxy containers
+# (mode 0 = tinyproxy, no tunnel), so later Tor/WG/VLESS switches keep the same egress path.
 ask_proxies() {
   printf '\n%s%s%s\n' "$C_B" "$(t px_title)" "$C_RESET"
   printf '  %s%s%s\n  %s%s%s\n' "$C_DIM" "$(t px_stack)" "$C_RESET" "$C_DIM" "$(t px_web)" "$C_RESET"
-  if confirm "$(t px_stack_q)" 'N'; then
-    choose_egress_slot stack '1'; configure_egress_secrets stack
-    if confirm "$(t px_local_q)" 'N'; then ROUTE_LOCAL_LLM="true"; else ROUTE_LOCAL_LLM="false"; fi
+  if confirm "$(t px_stack_q)" 'Y'; then
+    choose_egress_slot stack '0'; configure_egress_secrets stack
+    if confirm "$(t px_local_q)" 'Y'; then ROUTE_LOCAL_LLM="true"; else ROUTE_LOCAL_LLM="false"; fi
   else EGRESS_STACK="none"; fi
-  if confirm "$(t px_web_q)" 'N'; then
-    choose_egress_slot web '2'; configure_egress_secrets web
+  if confirm "$(t px_web_q)" 'Y'; then
+    choose_egress_slot web '0'; configure_egress_secrets web
   else EGRESS_WEB="none"; fi
   compute_egress_endpoints
   return 0   # never let a trailing non-zero abort the installer under set -e

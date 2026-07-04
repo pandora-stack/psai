@@ -15,7 +15,17 @@ MODULES=(lib/*.sh)   # glob expands in sorted (numeric-prefix) order
 
 tmp="$(mktemp)"
 for f in "${MODULES[@]}"; do
-  cat "$f" >> "$tmp"
+  if [ "$f" = "lib/93-python-dashboard.sh" ] && [ -f assets/psai-dashboard.py ]; then
+    while IFS= read -r line; do
+      if [ "$line" = "__PSAI_DASHBOARD_PY__" ]; then
+        cat assets/psai-dashboard.py >> "$tmp"
+      else
+        printf '%s\n' "$line" >> "$tmp"
+      fi
+    done < "$f"
+  else
+    cat "$f" >> "$tmp"
+  fi
 done
 
 # Sanity: the assembled file must be valid bash before we publish it.

@@ -46,26 +46,37 @@ resolve_domain_input() {
 
 default_stack_dir_for() { printf '%s/%s' "$HOME" "$1"; }
 
+domain_row() {
+  local label="$1" value="$2" idx="${3:-}"
+  if [ -n "$idx" ]; then
+    printf '  %s[%s]%s ' "$C_CYAN" "$idx" "$C_RESET"
+  else
+    printf '  '
+  fi
+  pad_right "$label" 18
+  printf ' %s\n' "$value"
+}
+
 print_active_domains() {
   printf '\n%s%s%s\n' "$C_B" "$(t dom_header)" "$C_RESET"
   if no_domain; then
-    [ "$ENABLE_OPENWEBUI" = "true" ] && printf '  %-18s http://localhost:%s\n' "$(t dom_psai)"     "$PORT_PSAI"
-    [ "$ENABLE_AGENTS"   = "true" ] && printf '  %-18s http://localhost:%s\n' "$(t dom_agents)" "$PORT_AGENTS"
+    [ "$ENABLE_OPENWEBUI" = "true" ] && domain_row "$(t dom_psai)"   "http://localhost:$PORT_PSAI"
+    [ "$ENABLE_AGENTS"   = "true" ] && domain_row "$(t dom_agents)" "http://localhost:$PORT_AGENTS"
     if [ "$ENABLE_GIT" = "true" ]; then
-      printf '  %-18s http://localhost:%s\n' "$(t dom_gitweb)" "$PORT_GIT"
-      printf '  %-18s localhost:%s\n'        "$(t dom_gitssh)" "$GIT_SSH_PORT"
+      domain_row "$(t dom_gitweb)" "http://localhost:$PORT_GIT"
+      domain_row "$(t dom_gitssh)" "localhost:$GIT_SSH_PORT"
     fi
-    [ "$ENABLE_QDRANT" = "true" ] && printf '  %-18s http://localhost:%s\n' "$(t dom_qdrant)" "$PORT_QDRANT"
+    [ "$ENABLE_QDRANT" = "true" ] && domain_row "$(t dom_qdrant)" "http://localhost:$PORT_QDRANT"
     return 0
   fi
-  [ "$ENABLE_OPENWEBUI" = "true" ] && printf '  %s[1]%s %-18s https://%s\n' "$C_CYAN" "$C_RESET" "$(t dom_psai)"     "$PSAI_DOMAIN"
-  [ "$ENABLE_AGENTS"   = "true" ] && printf '  %s[2]%s %-18s https://%s\n' "$C_CYAN" "$C_RESET" "$(t dom_agents)" "$AGENTS_DOMAIN"
+  [ "$ENABLE_OPENWEBUI" = "true" ] && domain_row "$(t dom_psai)"   "https://$PSAI_DOMAIN" "1"
+  [ "$ENABLE_AGENTS"   = "true" ] && domain_row "$(t dom_agents)" "https://$AGENTS_DOMAIN" "2"
   if [ "$ENABLE_GIT" = "true" ]; then
-    printf '  %s[3]%s %-18s https://%s\n' "$C_CYAN" "$C_RESET" "$(t dom_gitweb)"  "$GIT_DOMAIN"
-    printf '  %s[4]%s %-18s %s\n'          "$C_CYAN" "$C_RESET" "$(t dom_gitssh)"  "$GIT_SSH_HOST"
-    printf '  %s[5]%s %-18s %s\n'          "$C_CYAN" "$C_RESET" "$(t dom_gitport)" "$GIT_SSH_PORT"
+    domain_row "$(t dom_gitweb)"  "https://$GIT_DOMAIN" "3"
+    domain_row "$(t dom_gitssh)"  "$GIT_SSH_HOST" "4"
+    domain_row "$(t dom_gitport)" "$GIT_SSH_PORT" "5"
   fi
-  [ "$ENABLE_QDRANT" = "true" ] && printf '  %s[6]%s %-18s https://%s\n' "$C_CYAN" "$C_RESET" "$(t dom_qdrant)" "$QDRANT_DOMAIN"
+  [ "$ENABLE_QDRANT" = "true" ] && domain_row "$(t dom_qdrant)" "https://$QDRANT_DOMAIN" "6"
   return 0
 }
 

@@ -14,7 +14,12 @@ cron_install() {
 }
 cron_remove() {
   load_config 2>/dev/null || true
-  crontab -l 2>/dev/null | grep -v "$(cron_marker)" | crontab - 2>/dev/null || true
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/psai-cron.XXXXXX")" || return 0
+  crontab -l 2>/dev/null | grep -v "$(cron_marker)" > "$tmp" || true
+  if [ -s "$tmp" ]; then crontab "$tmp" 2>/dev/null || true
+  else crontab -r 2>/dev/null || true; fi
+  rm -f "$tmp" 2>/dev/null || true
   printf '%s%s%s\n' "$C_GREEN" "$(t done_word)" "$C_RESET"
 }
 
@@ -60,7 +65,10 @@ self_update() {
     rm -f "$vjson"
   fi
 
-  if load_config 2>/dev/null && [ -d "$STACK_DIR/bin" ]; then cp "$tmp" "$STACK_DIR/bin/$MGMT_NAME"; chmod +x "$STACK_DIR/bin/$MGMT_NAME"; fi
+  if load_config 2>/dev/null && [ -d "$STACK_DIR/bin" ]; then
+    cp "$tmp" "$STACK_DIR/bin/$MGMT_NAME"; chmod +x "$STACK_DIR/bin/$MGMT_NAME"
+    command -v write_python_dashboard >/dev/null 2>&1 && write_python_dashboard || true
+  fi
   rm -f "$tmp"; printf '%s%s%s\n' "$C_GREEN" "$(t done_word)" "$C_RESET"
 }
 

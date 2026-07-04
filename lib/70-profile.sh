@@ -122,23 +122,23 @@ ask_seal_pass() {
 
 # Step 4 entry: pick profile (one line), preview, then apply or tune.
 choose_security_profile() {
-  menu_line "$(t sec_q)" s "$(t sec_strict)" d "$(t sec_default)" n "$(t sec_none)"
-  printf '    %s[s]%s %s%s%s\n' "$C_CYAN" "$C_RESET" "$C_DIM" "$(t sec_strict_d)"  "$C_RESET"
-  printf '    %s[d]%s %s%s%s\n' "$C_CYAN" "$C_RESET" "$C_DIM" "$(t sec_default_d)" "$C_RESET"
-  printf '    %s[n]%s %s%s%s\n' "$C_CYAN" "$C_RESET" "$C_DIM" "$(t sec_none_d)"    "$C_RESET"
-  local c; c="$(ask "$(t sec_q)" 'd')"
+  menu_line "$(t sec_q)" 1 "$(t sec_strict)" 2 "$(t sec_default)" 3 "$(t sec_none)"
+  printf '    %s[1]%s %s%s%s\n' "$C_CYAN" "$C_RESET" "$C_DIM" "$(t sec_strict_d)"  "$C_RESET"
+  printf '    %s[2]%s %s%s%s\n' "$C_CYAN" "$C_RESET" "$C_DIM" "$(t sec_default_d)" "$C_RESET"
+  printf '    %s[3]%s %s%s%s\n' "$C_CYAN" "$C_RESET" "$C_DIM" "$(t sec_none_d)"    "$C_RESET"
+  local c; c="$(ask "$(t sec_q)" '2')"
   case "$(printf '%s' "$c" | tr -d '[][:space:]' | tr 'A-Z' 'a-z')" in
-    s|strict) SECURITY_PROFILE="strict" ;;
-    n|none)   SECURITY_PROFILE="none" ;;
+    1|strict) SECURITY_PROFILE="strict" ;;
+    3|none)   SECURITY_PROFILE="none" ;;
     *)        SECURITY_PROFILE="default" ;;
   esac
   resolve_security_profile
   security_preview
   printf '\n'
-  menu_line "" a "$(t sec_apply)" c "$(t sec_tune)"
-  local d; d="$(ask "$(t menu_choice)" 'a')"
+  menu_line "" 1 "$(t sec_apply)" 2 "$(t sec_tune)"
+  local d; d="$(ask "$(t menu_choice)" '1')"
   case "$(printf '%s' "$d" | tr -d '[][:space:]' | tr 'A-Z' 'a-z')" in
-    c|tune|manual) security_tune ;;
+    2|tune|manual) security_tune ;;
     *) : ;;
   esac
   ask_seal_pass

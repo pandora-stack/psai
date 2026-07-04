@@ -18,6 +18,8 @@ docs/data.*
 # local dev-only agent/work notes — keep out of published main
 AGENTS.md
 dev/
+addons/
+release/
 
 # OS noise
 .DS_Store

@@ -33,6 +33,16 @@ status_stack()  { load_config || exit 1; ensure_path_brew; compose ps; }
 restart_stack() { load_config || exit 1; ensure_path_brew; compose restart; }
 logs_stack()    { load_config || exit 1; ensure_path_brew; local svc="${1:-}"; if [ -n "$svc" ]; then compose logs -f --tail=200 "$svc"; else compose logs -f --tail=200; fi; }
 
+stack_running() {
+  load_config >/dev/null 2>&1 || return 1
+  [ -f "$STACK_DIR/compose/docker-compose.yml" ] || return 1
+  command_exists docker || return 1
+  local running total
+  total="$(cd "$STACK_DIR/compose" 2>/dev/null && docker compose -f docker-compose.yml ps -a --services 2>/dev/null | wc -l | tr -d ' ')" || total=0
+  running="$(cd "$STACK_DIR/compose" 2>/dev/null && docker compose -f docker-compose.yml ps --services 2>/dev/null | wc -l | tr -d ' ')" || running=0
+  [ "${total:-0}" -gt 0 ] 2>/dev/null && [ "$running" -gt 0 ] 2>/dev/null
+}
+
 uninstall_usage() {
   printf '%s\n' "$(t un_usage)"
 }

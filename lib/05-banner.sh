@@ -42,8 +42,8 @@ banner_stack() {
 render_context() {
   local prof="${DEPLOY_PROFILE:-local}" dom security="${SECURITY_PROFILE:-default}"
   if [ "$prof" = "public" ] && [ -n "${PUBLIC_DOMAIN:-}" ]; then dom="$PUBLIC_DOMAIN"; else dom="${PSAI_DOMAIN:-${DOMAIN_ZONE:-lan}}"; fi
-  printf '  %sStatus:%s %s%s · %s · %s%s\n' \
-    "$C_DIM" "$C_RESET" "$C_B" "${NODE_MODE:-single}" "$prof" "$dom" "$C_RESET"
+  printf '  %s%s:%s %s%s · %s · %s%s\n' \
+    "$C_DIM" "$(t status_label)" "$C_RESET" "$C_B" "${NODE_MODE:-single}" "$prof" "$dom" "$C_RESET"
   printf '  %s%s:%s %s%s%s\n' "$C_DIM" "$(t sec_profile_label)" "$C_RESET" "$C_B" "$security" "$C_RESET"
   return 0
 }

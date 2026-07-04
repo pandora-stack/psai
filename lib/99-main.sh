@@ -20,6 +20,7 @@ main() {
     upgrade)    ensure_lang; component_manager ;;
     backup)     shift || true; ensure_lang; backup_stack "$@" ;;
     restore)    shift || true; ensure_lang; restore_stack "$@" ;;
+    proxy-apply) shift || true; ensure_lang; proxy_apply_quiet "$@" ;;
     proxy|egress)   ensure_lang; load_config && proxy_menu ;;
     security)   ensure_lang; load_config && security_menu ;;
     seal)       ensure_lang; seal_now ;;
@@ -42,10 +43,11 @@ main() {
     health|--health)                 ensure_lang; health_check ;;
     check-install|--check-install)   ensure_lang; install_check ;;
     check-security|--check-security) ensure_lang; security_check ;;
+    dashboard-install) ensure_lang; load_config && write_python_dashboard ;;
     help|-h|--help)  ensure_lang; print_help ;;
     --version|-v)    echo "$STACK_VERSION $STACK_CHANNEL ($STACK_VERSION_TAG)" ;;
     "")
-      if load_config >/dev/null 2>&1; then installed_menu; else bootstrap_menu; fi ;;
+      if load_config >/dev/null 2>&1 || detect_installed_stack >/dev/null 2>&1; then installed_menu; else bootstrap_menu; fi ;;
     *) usage; exit 1 ;;
   esac
 }

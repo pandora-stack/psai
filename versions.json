@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "stack": "1.0.3",
+  "stack": "1.1.3",
   "channel": "beta",
-  "released": "2026-07-02",
-  "installer_sha256": "b6d5da5c4088015cabae26a92501b6cf92468ab4d95e75ce8c7dea7173511825",
+  "released": "2026-07-03",
+  "installer_sha256": "c64ff521c22a7ba5ac1446b8846bf949e8bb6d48f90f9ba7ba40a72f3bc77e27",
   "images": {
     "openwebui": "ghcr.io/open-webui/open-webui:main",
     "openhands": "ghcr.io/all-hands-ai/openhands:1.8.0",
@@ -11,6 +11,7 @@
     "qdrant":    "qdrant/qdrant:latest",
     "forgejo":   "codeberg.org/forgejo/forgejo:15",
     "caddy":     "caddy:2.9-alpine",
+    "proxy_http": "kalaksi/tinyproxy:latest",
     "proxy_tor": "dperson/torproxy:latest",
     "proxy_wireguard": "lscr.io/linuxserver/wireguard:latest",
     "embed":     "michaelf34/infinity:latest",

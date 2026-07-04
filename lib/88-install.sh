@@ -1,22 +1,142 @@
 # ───────────────────────────── install flow (steps 0–5) ─────────────────────────────
 
-# Optional: choose your own admin password. When set it becomes the Caddy basic-auth gate
-# for the web UIs (Open WebUI/OpenHands/Qdrant) — bcrypt-hashed into the Caddyfile, the
-# plaintext stored only in the secret store (the vault when sealed), never beside the config.
+# Optional: choose your own admin password. When set it becomes the Caddy/basic-auth gate
+# for protected browser UIs (OpenHands/Qdrant, and Open WebUI only on public deployments).
+# Open WebUI's own first admin is created by the first browser registration.
 ask_admin_password() {
   [ "$NONINTERACTIVE" = "1" ] && return 0
-  confirm "$(t admin_pw_q)" 'N' || return 0
+  confirm "$(t admin_pw_q)" 'Y' || return 0
   read_secret_confirmed ADMIN_PASSWORD_PLAIN "$(t pw_label)"
   return 0
+}
+
+stack_config_in_dir() {
+  local d="${1:-}"
+  [ -n "$d" ] || return 1
+  if [ -f "$d/.stack.env" ]; then printf '%s/.stack.env' "$d"; return 0; fi
+  if [ -f "$d/../.stack.env" ]; then (cd "$d/.." 2>/dev/null && printf '%s/.stack.env' "$(pwd)"); return 0; fi
+  return 1
+}
+
+detect_installed_stack() {
+  local cand link dir cfg
+  for cand in "${STACK_DIR:-}" "$HOME/$DEFAULT_STACK_NAME"; do
+    cfg="$(stack_config_in_dir "$cand" 2>/dev/null || true)"
+    [ -n "$cfg" ] || continue
+    STACK_DIR="$(cd "$(dirname "$cfg")" 2>/dev/null && pwd)" || continue
+    load_config >/dev/null 2>&1 && return 0
+  done
+  if command_exists "$MGMT_NAME"; then
+    link="$(command -v "$MGMT_NAME" 2>/dev/null || true)"
+    [ -n "$link" ] || return 1
+    dir="$(_psai_resolve_dir "$link")"
+    for cand in "$dir" "$dir/.."; do
+      cfg="$(stack_config_in_dir "$cand" 2>/dev/null || true)"
+      [ -n "$cfg" ] || continue
+      STACK_DIR="$(cd "$(dirname "$cfg")" 2>/dev/null && pwd)" || continue
+      load_config >/dev/null 2>&1 && return 0
+    done
+  fi
+  return 1
+}
+
+cleanup_invoked_installer() {
+  [ -n "${STACK_DIR:-}" ] || return 0
+  local p="$SCRIPT_PATH" installed="$STACK_DIR/bin/$MGMT_NAME"
+  [ -n "$p" ] || return 0
+  [ -f "$p" ] || return 0
+  [ -f "$installed" ] && [ "$p" -ef "$installed" ] 2>/dev/null && return 0
+  case "$p" in
+    /tmp/*|/private/tmp/*|/var/folders/*/T/*) rm -f "$p" 2>/dev/null || true ;;
+  esac
+}
+
+handoff_to_installed_dashboard() {
+  cleanup_invoked_installer
+  is_interactive || return 0
+  printf '\n  %s%s%s\n' "$C_DIM" "$(t fin_dashboard)" "$C_RESET"
+  exec "$STACK_DIR/bin/$MGMT_NAME"
+}
+
+post_install_handoff() {
+  if [ "$ENABLE_OPENWEBUI" = "true" ]; then
+    printf '  %s%s%s\n' "$C_YELLOW" "$(t fin_openwebui_register)" "$C_RESET"
+  fi
+  if [ "$ENABLE_GIT" = "true" ]; then
+    printf '  %s%s%s\n' "$C_YELLOW" "$(t fin_git_register)" "$C_RESET"
+  fi
+  if ! is_interactive; then return 0; fi
+  confirm "$(t q_open_dashboard)" 'Y' || return 0
+  handoff_to_installed_dashboard
+}
+
+reinstall_keep_data() {
+  printf '\n%s%s%s\n' "$C_B" "$(t reinstall_start)" "$C_RESET"
+  update_rebuild || return 1
+  finish_message
+  post_install_handoff
+}
+
+reinstall_purge_data() {
+  local old="$STACK_DIR"
+  uninstall_stack --yes --data --dir "$old" || return 1
+  INSTALL_SKIP_EXISTING_CHECK=true perform_install
+}
+
+existing_install_flow() {
+  [ "${INSTALL_SKIP_EXISTING_CHECK:-false}" = "true" ] && return 1
+  detect_installed_stack || return 1
+  if [ "$NONINTERACTIVE" = "1" ]; then
+    case "${PSAI_REINSTALL:-}" in
+      keep|yes|true|1) reinstall_keep_data; return 0 ;;
+      purge|clean|data|reset) reinstall_purge_data; return 0 ;;
+      *) printf '%s%s%s\n' "$C_YELLOW" "$(t reinstall_noninteractive)" "$C_RESET" >&2; return 1 ;;
+    esac
+  fi
+  sub_header "$(t reinstall_found)"
+  printf '  %s%s%s\n\n' "$C_DIM" "$STACK_DIR" "$C_RESET"
+  printf '  %s[1]%s %s\n' "$C_CYAN" "$C_RESET" "$(t reinstall_keep)"
+  printf '  %s[2]%s %s\n' "$C_CYAN" "$C_RESET" "$(t reinstall_purge)"
+  printf '  %s[3]%s %s\n' "$C_CYAN" "$C_RESET" "$(t reinstall_open)"
+  printf '  %s[0]%s %s\n\n' "$C_CYAN" "$C_RESET" "$(t reinstall_cancel)"
+  printf '%s: ' "$(t menu_choice)"
+  local c=""; read_user_line c; c="$(trim "$c")"
+  case "$c" in
+    1) reinstall_keep_data ;;
+    2) reinstall_purge_data ;;
+    3) installed_menu ;;
+    0|"") echo "$(t cancelled)" ;;
+    *) echo "$(t cancelled)" ;;
+  esac
+  return 0
+}
+
+ensure_install_vault_pass() {
+  vault_enabled || return 0
+  [ -f "$STACK_DIR/secrets/kms.conf" ] && return 0
+  [ -n "${SEAL_PASS_PLAIN:-${PSAI_VAULT_PASS:-}}" ] && return 0
+  if [ "$NONINTERACTIVE" = "1" ]; then
+    printf '%s%s%s\n' "$C_RED" "$(t vault_need_pass)" "$C_RESET" >&2
+    return 1
+  fi
+  printf '  %s%s%s\n' "$C_DIM" "$(t vault_passhint)" "$C_RESET"
+  read_secret_confirmed SEAL_PASS_PLAIN "$(t vault_pass)"
+}
+
+print_vault_log_tail() {
+  local log; log="$(vault_log)"
+  [ -s "$log" ] || return 0
+  printf '%s--- vault log: %s ---%s\n' "$C_DIM" "$log" "$C_RESET" >&2
+  tail -n 20 "$log" >&2 || true
 }
 
 # STEP 1 — node.
 choose_node() {
   printf '\n%s%s%s\n' "$C_B" "$(t step1_title)" "$C_RESET"
-  menu_line "$(t node_q)" s "$(t node_single)" m "$(t node_multi)"
-  local c; c="$(ask "$(t node_q)" 's')"
+  menu_line "$(t node_q)" 1 "$(t node_single)" 2 "$(t node_multi)"
+  local c; c="$(ask "$(t node_q)" '1')"
   case "$(printf '%s' "$c" | tr -d '[][:space:]' | tr 'A-Z' 'a-z')" in
-    m|multi|multiple) NODE_MODE="multi" ;;
+    2|multi|multiple) NODE_MODE="multi" ;;
     *)                NODE_MODE="single" ;;
   esac
   if [ "$NODE_MODE" = "multi" ]; then
@@ -37,10 +157,10 @@ choose_node() {
 choose_deploy_profile() {
   if [ "$NODE_MODE" = "multi" ]; then DEPLOY_PROFILE="public"; else
     printf '\n%s%s%s\n' "$C_B" "$(t step2_title)" "$C_RESET"
-    menu_line "$(t prof_q)" l "$(t prof_local)" p "$(t prof_public)"
-    local c; c="$(ask "$(t prof_q)" 'l')"
+    menu_line "$(t prof_q)" 1 "$(t prof_local)" 2 "$(t prof_public)"
+    local c; c="$(ask "$(t prof_q)" '1')"
     case "$(printf '%s' "$c" | tr -d '[][:space:]' | tr 'A-Z' 'a-z')" in
-      p|public|pub) DEPLOY_PROFILE="public" ;;
+      2|public|pub) DEPLOY_PROFILE="public" ;;
       *)            DEPLOY_PROFILE="local" ;;
     esac
   fi
@@ -112,16 +232,16 @@ choose_components() {
   # ── Additional / advanced components ──────────────────────────────────────────────
   # One gate, default OFF, so a plain install stays simple (chat + agents + search + git).
   # Yes → vector memory / RAG-plus, a memory backend + local LLM, MCP/LLM gateways, eval.
-  if ! confirm "$(t q_extras)" 'N'; then extras_default_off; return 0; fi
+  if ! confirm "$(t q_extras)" 'Y'; then extras_default_off; return 0; fi
   printf '  %s%s%s\n' "$C_B$C_CYAN" "$(t q_extras_title)" "$C_RESET"
   choose_local_ai   # AI section: hardware check → bundle Ollama + a fitting model (memory reuses it)
   # Shared vector memory.
   if [ "$NODE_MODE" = "multi" ]; then
     confirm "$(t ra_shared_q)" 'N' && { SHARED_MEMORY="true"; ENABLE_QDRANT="true"; } || SHARED_MEMORY="false"
   else
-    if confirm "$(t q_qdrant)" 'N'; then
+    if confirm "$(t q_qdrant)" 'Y'; then
       ENABLE_QDRANT="true"
-      printf '  %s%s%s\n' "$C_DIM" "$(t q_rag_plus_hint)" "$C_RESET"
+      printf '  %s%s%s\n' "$C_DIM" "$(rag_plus_hint_text)" "$C_RESET"
       confirm "$(t q_rag_plus)" "$(rag_plus_default_answer)" && RAG_MODE="plus" || RAG_MODE="basic"
     else ENABLE_QDRANT="false"; RAG_MODE="off"; fi
   fi
@@ -132,7 +252,7 @@ choose_components() {
   # Memory backend (shared by chat + agents). One selector replaces the old MCP-stub toggle.
   if [ "$ENABLE_AGENTS" = "true" ] || [ "$ENABLE_OPENWEBUI" = "true" ]; then
     printf '  %s%s%s\n' "$C_DIM" "$(t q_memory_hint)" "$C_RESET"
-    local mc; mc="$(ask "$(t q_memory)" "$([ "$ENABLE_QDRANT" = "true" ] && printf stub || printf none)")"
+    local mc; mc="$(ask "$(t q_memory)" "$([ "$ENABLE_QDRANT" = "true" ] && printf cognee || printf none)")"
     case "$(printf '%s' "$mc" | tr -d '[:space:]' | tr 'A-Z' 'a-z')" in
       cognee)   MEMORY_MODE="cognee"; ENABLE_MCP="false" ;;
       graphiti) MEMORY_MODE="graphiti"; ENABLE_MCP="false" ;;
@@ -156,9 +276,9 @@ choose_components() {
   # Verified tool servers for the agents (Docker MCP Gateway). Needs the host socket.
   if [ "$ENABLE_AGENTS" = "true" ]; then
     printf '  %s%s%s\n' "$C_DIM" "$(t q_gateway_hint)" "$C_RESET"
-    confirm "$(t q_gateway)" 'N' && MCP_GATEWAY="true" || MCP_GATEWAY="false"
-    confirm "$(t q_litellm)" 'N' && LLM_GATEWAY="true" || LLM_GATEWAY="false"
-    confirm "$(t q_eval)" 'N' && ENABLE_EVAL="true" || ENABLE_EVAL="false"
+    confirm "$(t q_gateway)" 'Y' && MCP_GATEWAY="true" || MCP_GATEWAY="false"
+    confirm "$(t q_litellm)" 'Y' && LLM_GATEWAY="true" || LLM_GATEWAY="false"
+    confirm "$(t q_eval)" 'Y' && ENABLE_EVAL="true" || ENABLE_EVAL="false"
   else MCP_GATEWAY="false"; LLM_GATEWAY="false"; ENABLE_EVAL="false"; fi
   if confirm "$(t q_pentest)" 'N'; then printf '  %s%s%s\n' "$C_RED" "$(t pentest_warn)" "$C_RESET"; ENABLE_PENTEST="true"; else ENABLE_PENTEST="false"; fi
   return 0   # never let a trailing non-zero abort the installer under set -e
@@ -169,7 +289,7 @@ choose_components() {
 choose_zone() {
   printf '\n%s%s%s\n' "$C_B" "$(t step5_title)" "$C_RESET"
   if [ "$DEPLOY_PROFILE" = "public" ] && [ -n "${PUBLIC_DOMAIN:-}" ]; then
-    DOMAIN_ZONE="$PUBLIC_DOMAIN"
+    NO_DOMAIN="false"; DOMAIN_ZONE="$PUBLIC_DOMAIN"
   else
     # Local: domains are optional. Decline → reach services on http://localhost:PORT.
     if ! confirm "$(t q_use_domains)" 'Y'; then
@@ -179,7 +299,7 @@ choose_zone() {
       print_active_domains
       return 0
     fi
-    DOMAIN_ZONE="$DEFAULT_DOMAIN_ZONE"
+    NO_DOMAIN="false"; DOMAIN_ZONE="$DEFAULT_DOMAIN_ZONE"
   fi
   printf '  %s: %s%s%s\n' "$(t q_zone_def)" "$C_B" "$DOMAIN_ZONE" "$C_RESET"
   set_default_domains
@@ -192,24 +312,30 @@ choose_zone() {
 }
 
 show_summary() {
+  local ops=""
+  summary_csv() { printf '%s' "$1" | sed 's/, */, /g'; }
+  summary_row() {
+    local label="$1" value="$2"
+    printf '  '
+    pad_right "$label:" 14
+    printf ' %s\n' "$value"
+  }
   printf '\n%s%s%s\n' "$C_B" "$(t sum_header)" "$C_RESET"
-  printf '  %-14s %s\n' "$(t sum_name):"    "$STACK_NAME"
-  printf '  %-14s %s\n' "$(t sum_dir):"     "$STACK_DIR"
-  printf '  %-14s %s\n' "$(t sum_node):"    "$NODE_MODE"
-  printf '  %-14s %s\n' "$(t sum_profile):" "$DEPLOY_PROFILE"
-  printf '  %-14s %s\n' "$(t sec_q):"       "$SECURITY_PROFILE"
-  printf '  %-14s %s\n' "$(t sum_zone):"    "$DOMAIN_ZONE"
-  printf '  %-14s %s · %s · %s · %s · %s · %s\n' "Components:" \
-    "OpenWebUI=$(bool_label "$ENABLE_OPENWEBUI")" "OpenHands=$(bool_label "$ENABLE_AGENTS")" \
-    "Search=$(bool_label "$ENABLE_SEARCH")" "Git=$(bool_label "$ENABLE_GIT")" \
-    "Qdrant=$(bool_label "$ENABLE_QDRANT")" "MCP=$(bool_label "$ENABLE_MCP")"
-  [ "${RAG_MODE:-off}" != "off" ] && printf '  %-14s %s\n' "RAG:" "$RAG_MODE"
-  case "${MEMORY_MODE:-stub}" in stub|none) : ;; *) printf '  %-14s %s\n' "Memory:" "$MEMORY_MODE" ;; esac
-  [ "${LOCAL_LLM:-none}" = "ollama" ] && printf '  %-14s ollama (%s)\n' "LLM:" "$OLLAMA_MODEL"
-  [ "${MCP_GATEWAY:-false}" = "true" ] && printf '  %-14s %s\n' "MCP gateway:" "$MCP_GATEWAY_SERVERS"
-  { [ "${LLM_GATEWAY:-false}" = "true" ] || [ "${ENABLE_EVAL:-false}" = "true" ]; } && \
-    printf '  %-14s %s%s\n' "Ops:" "$([ "$LLM_GATEWAY" = true ] && printf 'LiteLLM ')" "$([ "$ENABLE_EVAL" = true ] && printf 'Langfuse')"
-  printf '  %-14s stack=%s  web=%s\n' "Proxies:" "$EGRESS_STACK" "$EGRESS_WEB"
+  summary_row "$(t sum_name)" "$STACK_NAME"
+  summary_row "$(t sum_dir)" "$STACK_DIR"
+  summary_row "$(t sum_node)" "$NODE_MODE"
+  summary_row "$(t sum_profile)" "$DEPLOY_PROFILE"
+  summary_row "$(t sec_q)" "$SECURITY_PROFILE"
+  summary_row "$(t sum_zone)" "$DOMAIN_ZONE"
+  summary_row "$(t sum_components)" "OpenWebUI: $(bool_label "$ENABLE_OPENWEBUI"), OpenHands: $(bool_label "$ENABLE_AGENTS"), Search: $(bool_label "$ENABLE_SEARCH"), Git: $(bool_label "$ENABLE_GIT"), Qdrant: $(bool_label "$ENABLE_QDRANT"), MCP: $(bool_label "$ENABLE_MCP")"
+  [ "${RAG_MODE:-off}" != "off" ] && summary_row "RAG" "$RAG_MODE"
+  case "${MEMORY_MODE:-stub}" in stub|none) : ;; *) summary_row "$(t sum_memory)" "$MEMORY_MODE" ;; esac
+  [ "${LOCAL_LLM:-none}" = "ollama" ] && summary_row "LLM" "ollama: $OLLAMA_MODEL"
+  [ "${MCP_GATEWAY:-false}" = "true" ] && summary_row "$(t sum_mcp_gateway)" "$(summary_csv "$MCP_GATEWAY_SERVERS")"
+  [ "${LLM_GATEWAY:-false}" = "true" ] && ops="LiteLLM"
+  [ "${ENABLE_EVAL:-false}" = "true" ] && ops="${ops:+$ops, }Langfuse"
+  [ -n "$ops" ] && summary_row "$(t sum_ops)" "$ops"
+  summary_row "$(t sum_proxies)" "stack: $EGRESS_STACK, web: $EGRESS_WEB"
   print_active_domains
   printf '\n'
 }
@@ -247,9 +373,12 @@ apply_defaults_noninteractive() {
     SECURITY_PROFILE="${PSAI_PROFILE:-none}"
     ENABLE_OPENWEBUI="${PSAI_OPENWEBUI:-true}"; ENABLE_AGENTS="${PSAI_AGENTS:-true}"
     ENABLE_SEARCH="${PSAI_SEARCH:-true}"; ENABLE_GIT="${PSAI_GIT:-true}"
+    ENABLE_QDRANT="${PSAI_QDRANT:-true}"
     RAG_MODE="${PSAI_RAG:-plus}"; MEMORY_MODE="${PSAI_MEMORY:-cognee}"; LOCAL_LLM="${PSAI_LLM:-ollama}"
+    ROUTE_LOCAL_LLM="${PSAI_ROUTE_LOCAL_LLM:-true}"
     OLLAMA_MODEL="${PSAI_OLLAMA_MODEL:-$(gpu_default_model)}"   # platform-aware local default
     MCP_GATEWAY="${PSAI_MCP_GATEWAY:-true}"; LLM_GATEWAY="${PSAI_LLM_GATEWAY:-true}"; ENABLE_EVAL="${PSAI_EVAL:-true}"
+    NO_DOMAIN="${PSAI_NO_DOMAIN:-false}"
     [ "$DEPLOY_PROFILE" = "local" ] && DUAL_ACCESS="${PSAI_DUAL:-true}"
   fi
   [ "$NODE_MODE" = "multi" ] && { DEPLOY_PROFILE="public"; ENABLE_AGENTS="true"; }
@@ -262,7 +391,88 @@ apply_defaults_noninteractive() {
   compute_egress_endpoints
 }
 
+host_port_busy() {
+  local port="$1"
+  if command_exists lsof && lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    return 0
+  fi
+  if command_exists ss && ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${port}$"; then
+    return 0
+  fi
+  if command_exists netstat && netstat -an 2>/dev/null | grep -E "[.:]${port}[[:space:]].*LISTEN" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+pick_free_port() {
+  local port="$1" reserved="${2:-}"
+  while host_port_busy "$port" || printf '%s' " $reserved " | grep -Fq " $port "; do
+    port=$((port + 1))
+  done
+  printf '%s' "$port"
+}
+
+avoid_local_loopback_port_conflicts() {
+  [ "${DEPLOY_PROFILE:-local}" != "public" ] || return 0
+  { no_domain || dual_access; } || return 0
+  local changed="false" reserved="" current="" next=""
+
+  current="$PORT_PSAI"
+  if host_port_busy "$current"; then
+    next="$(pick_free_port 18080 "$reserved")"; PORT_PSAI="$next"; changed="true"
+  fi
+  reserved="$reserved $PORT_PSAI"
+
+  current="$PORT_AGENTS"
+  if host_port_busy "$current"; then
+    next="$(pick_free_port 18081 "$reserved")"; PORT_AGENTS="$next"; changed="true"
+  fi
+  reserved="$reserved $PORT_AGENTS"
+
+  current="$PORT_GIT"
+  if host_port_busy "$current"; then
+    next="$(pick_free_port 18082 "$reserved")"; PORT_GIT="$next"; changed="true"
+  fi
+  reserved="$reserved $PORT_GIT"
+
+  current="$PORT_QDRANT"
+  if host_port_busy "$current"; then
+    next="$(pick_free_port 18083 "$reserved")"; PORT_QDRANT="$next"; changed="true"
+  fi
+
+  if [ "$changed" = "true" ]; then
+    printf '%s%s: Open WebUI=%s OpenHands=%s Git=%s Qdrant=%s%s\n' \
+      "$C_YELLOW" "$(t port_loopback_busy)" "$PORT_PSAI" "$PORT_AGENTS" "$PORT_GIT" "$PORT_QDRANT" "$C_RESET" >&2
+  fi
+}
+
+avoid_local_caddy_port_conflict() {
+  [ "${DEPLOY_PROFILE:-local}" != "public" ] || return 0
+  if command_exists docker && docker ps --format '{{.Names}}' 2>/dev/null | grep -Fxq "${SAFE_STACK_NAME}-caddy"; then
+    return 0
+  fi
+  if ! no_domain && { host_port_busy 80 || host_port_busy 443; }; then
+    if [ "${NONINTERACTIVE:-0}" = "1" ] || [ "${ASSUME_DEFAULTS:-0}" = "1" ]; then
+      NO_DOMAIN="true"
+      DUAL_ACCESS="false"
+      DOMAIN_ZONE="localhost"
+      set_default_domains
+      printf '%s%s%s\n' "$C_YELLOW" "$(t port_web_busy)" "$C_RESET" >&2
+    else
+      printf '%s%s%s\n' "$C_RED" "$(t port_web_busy_domains)" "$C_RESET" >&2
+      return 1
+    fi
+  fi
+  avoid_local_loopback_port_conflicts
+}
+
 perform_install() {
+  if [ "${INSTALL_SKIP_EXISTING_CHECK:-false}" != "true" ] && detect_installed_stack; then
+    existing_install_flow
+    return $?
+  fi
+
   if [ "$NONINTERACTIVE" = "1" ] || [ "$ASSUME_DEFAULTS" = "1" ]; then
     NONINTERACTIVE="1"; apply_defaults_noninteractive
     check_dependencies || return 1
@@ -285,9 +495,6 @@ perform_install() {
   fi
   capture_docker_context   # pin the docker daemon (Colima vs Docker Desktop) for later runs
 
-  detect_os
-  [ "$OS_TYPE" = "macos" ] && printf '\n%s%s%s\n' "$C_YELLOW" "$(t mac_admin_note)" "$C_RESET"
-
   if [ -f "$STACK_DIR/.stack.env" ] && [ "$NONINTERACTIVE" != "1" ]; then
     printf '\n'; confirm "$(t q_overwrite)" 'Y' || exit 0
   fi
@@ -297,20 +504,24 @@ perform_install() {
   if vault_enabled; then
     mkdir -p "$STACK_DIR/bin" "$STACK_DIR/data/logs"
     vault_present || build_vault || true
-    vault_start || { printf '%svault required but not unsealed — aborting%s\n' "$C_RED" "$C_RESET"; return 1; }
+    ensure_install_vault_pass || return 1
+    vault_start || { print_vault_log_tail; printf '%svault required but not unsealed — aborting%s\n' "$C_RED" "$C_RESET"; return 1; }
   fi
 
-  if ingest_enabled; then STEP_TOTAL=6; else STEP_TOTAL=5; fi
+  if ingest_enabled; then STEP_TOTAL=7; else STEP_TOTAL=6; fi
   STEP_NUM=0
   run_step "$(t step_dirs)"     prepare_dirs_and_secrets
   run_step "$(t step_configs)"  write_all_configs
   run_step "$(t step_sandbox)"  build_openhands_sandbox
   run_step "$(t step_compose)"  validate_compose
+  run_pull_step || return 1
 
-  # /etc/hosts (local profile).
-  if [ "$DEPLOY_PROFILE" != "public" ]; then
+  # /etc/hosts (local profile with domains). No-domain installs use localhost ports only.
+  if [ "$DEPLOY_PROFILE" != "public" ] && ! no_domain; then
     if can_use_sudo; then
-      [ "$NONINTERACTIVE" = "1" ] || confirm "$(t q_add_hosts)" 'Y' && add_hosts_entries
+      if [ "$NONINTERACTIVE" = "1" ] || confirm "$(t q_add_hosts)" 'Y'; then
+        add_hosts_entries
+      fi
     else print_hosts_command; fi
   fi
 
@@ -339,8 +550,10 @@ perform_install() {
 
   # Trust the local CA when we can (so HTTPS just works).
   CA_TRUSTED="false"
-  if ! caddy_use_acme && can_use_sudo; then
-    do_trust_ca >/dev/null 2>&1 && CA_TRUSTED="true"
+  if ! caddy_use_acme && ! no_domain && can_use_sudo; then
+    if [ "$NONINTERACTIVE" != "1" ] && confirm "$(t q_trust_ca)" 'N'; then
+      do_trust_ca >/dev/null 2>&1 && CA_TRUSTED="true"
+    fi
   fi
 
   # Multi-node: provision the agent worker node(s) now that the master is up.
@@ -349,6 +562,7 @@ perform_install() {
   fi
 
   finish_message
+  post_install_handoff
 }
 
 finish_message() {

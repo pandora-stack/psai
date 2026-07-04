@@ -18,6 +18,17 @@ main_backend() {
 main_host() {
   if caddy_use_self; then host_ip; else printf '%s' "$PSAI_DOMAIN"; fi
 }
+main_site_addr() {
+  if caddy_use_self; then printf ':443'; else main_host; fi
+}
+
+caddy_reverse_proxy() {
+  local upstream="$1" indent="${2:-    }"
+  printf '%sreverse_proxy %s {\n' "$indent" "$upstream"
+  printf '%s    lb_try_duration 120s\n' "$indent"
+  printf '%s    lb_try_interval 2s\n' "$indent"
+  printf '%s}\n' "$indent"
+}
 
 generate_local_ca_and_cert() {
   no_domain && return 0   # localhost ports over http — no certs needed
@@ -69,7 +80,11 @@ write_caddy_dual_loopback() {
   local f="$STACK_DIR/compose/Caddyfile" mb; mb="$(main_backend)"
   {
     printf '\n(loop) {\n    encode zstd gzip\n    header -Server\n}\n'
-    [ "$ENABLE_OPENWEBUI" = "true" ] && printf '\n:%s {\n    import loop\n    reverse_proxy %s\n}\n' "$PORT_PSAI" "$mb"
+    if [ "$ENABLE_OPENWEBUI" = "true" ]; then
+      printf '\n:%s {\n    import loop\n' "$PORT_PSAI"
+      caddy_reverse_proxy "$mb" "    "
+      printf '}\n'
+    fi
     [ "$ENABLE_OPENWEBUI" != "true" ] && [ "$ENABLE_AGENTS" = "true" ] && printf '\n:%s {\n    import loop\n    reverse_proxy openhands:3000\n}\n' "$PORT_PSAI"
     [ "$ENABLE_OPENWEBUI" = "true" ] && [ "$ENABLE_AGENTS" = "true" ] && printf '\n:%s {\n    import loop\n    reverse_proxy openhands:3000\n}\n' "$PORT_AGENTS"
     [ "$ENABLE_GIT" = "true" ]    && printf '\n:%s {\n    import loop\n    reverse_proxy forgejo:3000\n}\n' "$PORT_GIT"
@@ -92,7 +107,9 @@ write_caddyfile() {
       printf '(common_http) {\n    encode zstd gzip\n    header {\n'
       printf '        X-Content-Type-Options "nosniff"\n        X-Frame-Options "SAMEORIGIN"\n        -Server\n    }\n}\n\n'
       if [ "$ENABLE_OPENWEBUI" = "true" ]; then
-        printf ':%s {\n    import common_http\n    reverse_proxy %s\n}\n\n' "$PORT_PSAI" "$(main_backend)"
+        printf ':%s {\n    import common_http\n' "$PORT_PSAI"
+        caddy_reverse_proxy "$(main_backend)" "    "
+        printf '}\n\n'
       elif [ "$ENABLE_AGENTS" = "true" ]; then
         printf ':%s {\n    import common_http\n    basic_auth {\n        %s %s\n    }\n    reverse_proxy openhands:3000\n}\n\n' "$PORT_PSAI" "$ADMIN_USER" "$(hash_password "$(secret_get agents_basic_auth)")"
       fi
@@ -129,8 +146,9 @@ write_caddyfile() {
     printf '}\n\n'
   } >> "$f"
 
-  local mb auth=""
+  local mb auth="" proxy_block
   mb="$(main_backend)"
+  proxy_block="$(caddy_reverse_proxy "$mb" "    ")"
   # OpenHands as the main backend (no WebUI) gets basic_auth; WebUI gets it only on public.
   if [ "$ENABLE_OPENWEBUI" != "true" ] && [ "$ENABLE_AGENTS" = "true" ]; then
     auth="    basic_auth {
@@ -149,16 +167,16 @@ write_caddyfile() {
     cat >> "$f" <<EOF
 localhost, 127.0.0.1 {
     import common
-$auth    reverse_proxy $mb
+$auth$proxy_block
 }
 
 EOF
   fi
 
   cat >> "$f" <<EOF
-$(main_host) {
+$(main_site_addr) {
     import common
-$auth    reverse_proxy $mb
+$auth$proxy_block
 }
 EOF
 

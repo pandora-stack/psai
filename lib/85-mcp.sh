@@ -595,7 +595,7 @@ append_mcp_service() {
 
   mcp:
     build: ../mcp
-    image: ${SAFE_STACK_NAME}-mcp:1.0.3
+    image: ${SAFE_STACK_NAME}-mcp:1.1.3
     container_name: ${SAFE_STACK_NAME}-mcp
     restart: unless-stopped
     security_opt: [ "no-new-privileges:true" ]
@@ -721,7 +721,7 @@ def search(query, limit=5):
 class Handler(BaseHTTPRequestHandler):
     OPENAPI = {
         "openapi": "3.1.0",
-        "info": {"title": "psai MCP", "version": "1.0.3"},
+        "info": {"title": "psai MCP", "version": "1.1.3"},
         "paths": {
             "/memory_store": {"post": {
                 "operationId": "memory_store", "summary": "Store text in shared memory (Qdrant)",
@@ -804,16 +804,20 @@ EOF
 
 append_pentest_service() {
   [ "$ENABLE_PENTEST" = "true" ] || return 0
+  local env_lines="" env_block=""
+  env_lines="$(stack_env_lines)"
+  [ -n "$env_lines" ] && env_block="    environment:
+$env_lines"
   cat >> "$STACK_DIR/compose/docker-compose.yml" <<EOF
 
   pentest:
     build: ../pentest
-    image: ${SAFE_STACK_NAME}-pentest:1.0.3
+    image: ${SAFE_STACK_NAME}-pentest:1.1.3
     container_name: ${SAFE_STACK_NAME}-pentest
     restart: unless-stopped
     cap_drop: [ ALL ]
     security_opt: [ "no-new-privileges:true" ]
-$(stack_env_lines)
+$env_block
     volumes:
       - ../data/pentest:/work
 EOF
@@ -835,10 +839,10 @@ write_openhands_mcp_config() {
   # memory:8000 / mem0 cloud) AND the Docker MCP Gateway (tool servers) — so the agents get
   # shared memory + verified tools over the same config.
   local list="" u
-  u="$(memory_sse_url)";      [ -n "$u" ] && list="\"$u\""
+  u="$(memory_sse_url || true)"; [ -n "$u" ] && list="\"$u\""
   # The gateway is token-gated: pass the pinned token as api_key so OpenHands sends
   # Authorization: Bearer … (a bare URL string would get 401).
-  u="$(mcp_gateway_sse_url)"
+  u="$(mcp_gateway_sse_url || true)"
   if [ -n "$u" ]; then
     [ -n "$list" ] && list="$list, "
     list="$list{url = \"$u\", api_key = \"$(secret_get mcp_gateway_token api_key_gen)\"}"

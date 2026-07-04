@@ -17,6 +17,12 @@ jobs:
       - name: Build (assemble + bash -n)
         run: ./build.sh
 
+      - name: Python dashboard syntax
+        run: python3 -m py_compile assets/psai-dashboard.py
+
+      - name: Installer embeds Python dashboard
+        run: grep -q 'class Dashboard' psai.sh
+
       - name: Shellcheck
         run: shellcheck -S warning -e SC2034 psai.sh
 

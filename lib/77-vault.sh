@@ -78,6 +78,55 @@ vault_prebuilt() {
   return 1
 }
 
+vault_release_url() {
+  local os tag
+  detect_os 2>/dev/null || true
+  case "${OS_TYPE:-}" in linux) os=linux ;; macos) os=macos ;; *) os="$(uname -s | tr 'A-Z' 'a-z')" ;; esac
+  tag="$(vault_arch_tag)"
+  printf '%s/releases/download/%s/stack-vault-%s-%s' "${REPO_WEB_URL%.git}" "$STACK_VERSION_TAG" "$os" "$tag"
+}
+
+download_vault_prebuilt() {
+  command_exists curl || return 1
+  local url tmp
+  url="${PSAI_VAULT_RELEASE_URL:-$(vault_release_url)}"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/stack-vault.XXXXXX")" || return 1
+  if curl -fsSL "$url" -o "$tmp" 2>/dev/null; then
+    mkdir -p "$STACK_DIR/bin"
+    mv "$tmp" "$(vault_bin)" && chmod +x "$(vault_bin)"
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  return 1
+}
+
+download_vault_source() {
+  command_exists curl || return 1
+  command_exists tar || return 1
+  local base tmp archive ref src dst
+  base="${REPO_WEB_URL%.git}"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/psai-vault-src.XXXXXX")" || return 1
+  archive="$tmp/src.tgz"
+  for ref in "$STACK_VERSION_TAG" main; do
+    [ -n "$ref" ] || continue
+    if curl -fsSL "${PSAI_VAULT_SRC_ARCHIVE:-$base/archive/refs/tags/$ref.tar.gz}" -o "$archive" 2>/dev/null \
+      || { [ "$ref" = "main" ] && curl -fsSL "$base/archive/refs/heads/main.tar.gz" -o "$archive" 2>/dev/null; }; then
+      tar -xzf "$archive" -C "$tmp" || continue
+      src="$(find "$tmp" -path '*/vault/Cargo.toml' -type f 2>/dev/null | sed -n '1p')"
+      [ -n "$src" ] || continue
+      dst="$STACK_DIR/vault-src"
+      rm -rf "$dst" "$dst.tmp" 2>/dev/null || true
+      mkdir -p "$STACK_DIR"
+      cp -R "$(dirname "$src")" "$dst.tmp" || continue
+      mv "$dst.tmp" "$dst"
+      printf '%s' "$dst"
+      return 0
+    fi
+  done
+  rm -rf "$tmp" 2>/dev/null || true
+  return 1
+}
+
 build_vault() {
   vault_present && return 0
   # A prebuilt binary (from the release, verified via versions.json) wins if present.
@@ -87,10 +136,12 @@ build_vault() {
   local pre; if pre="$(vault_prebuilt)"; then
     mkdir -p "$STACK_DIR/bin"; cp "$pre" "$(vault_bin)"; chmod +x "$(vault_bin)"; return 0
   fi
+  download_vault_prebuilt && return 0
   local src=""
   for d in "${PSAI_VAULT_SRC:-}" "$SCRIPT_DIR/vault" "$SCRIPT_DIR/../vault" "$STACK_DIR/vault-src"; do
     [ -n "$d" ] && [ -f "$d/Cargo.toml" ] && { src="$d"; break; }
   done
+  [ -n "$src" ] || src="$(download_vault_source || true)"
   [ -n "$src" ] || return 1
   ensure_path_brew
   if ! command_exists cargo; then
@@ -163,7 +214,7 @@ vault_start() {
     fi
     if [ -z "$p" ]; then
       if [ "$NONINTERACTIVE" = "1" ]; then printf '%s%s%s\n' "$C_RED" "$(t vault_need_pass)" "$C_RESET" >&2; return 1; fi
-      printf '%s: ' "$(t vault_pass)" >&2; stty -echo 2>/dev/null; IFS= read -r p; stty echo 2>/dev/null; printf '\n' >&2
+      read_secret_once p "$(t vault_pass)"
     fi
     PSAI_VAULT_PASS="$p" nohup "$(vault_bin)" serve --socket "$sock" --blob "$blob" >>"$(vault_log)" 2>&1 &
   fi

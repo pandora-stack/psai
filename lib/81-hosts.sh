@@ -31,17 +31,17 @@ print_hosts_command() {
 
 remove_hosts_entries() {
   [ "$DEPLOY_PROFILE" = "public" ] && return 0
-  no_domain && return 0
   detect_os
-  local marker; marker="$(hosts_marker)"
-  grep -q "$marker" /etc/hosts 2>/dev/null || return 0
+  local marker pattern; marker="$(hosts_marker)"
+  pattern="$marker|# ai_stack|# universal-ai-stack"
+  grep -E -q "$pattern" /etc/hosts 2>/dev/null || return 0
   if ! can_use_sudo; then print_remove_hosts_command; return 0; fi
   local S=""; [ "$(id -u)" = "0" ] || S="sudo"
-  $S sh -c "grep -v '$marker' /etc/hosts > /etc/hosts.psai.tmp 2>/dev/null; cat /etc/hosts.psai.tmp > /etc/hosts; rm -f /etc/hosts.psai.tmp" 2>/dev/null || true
+  $S sh -c "grep -Ev '$pattern' /etc/hosts > /etc/hosts.psai.tmp 2>/dev/null; cat /etc/hosts.psai.tmp > /etc/hosts; rm -f /etc/hosts.psai.tmp" 2>/dev/null || true
 }
 
 print_remove_hosts_command() {
-  printf '  sudo sh -c %s\n' "$(shq "grep -v '$(hosts_marker)' /etc/hosts > /etc/hosts.psai.tmp && cat /etc/hosts.psai.tmp > /etc/hosts && rm -f /etc/hosts.psai.tmp")"
+  printf '  sudo sh -c %s\n' "$(shq "grep -Ev '$(hosts_marker)|# ai_stack|# universal-ai-stack' /etc/hosts > /etc/hosts.psai.tmp && cat /etc/hosts.psai.tmp > /etc/hosts && rm -f /etc/hosts.psai.tmp")"
 }
 
 do_trust_ca() {

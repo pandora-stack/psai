@@ -3,47 +3,170 @@ check_update_status() { UPDATE_AVAILABLE="${UPDATE_AVAILABLE:-false}"; }
 
 # service|image|state|health for every container; cached so render is cheap.
 COMP_LIST=""
+COMP_SELECTED=1
+DASH_FOCUS="${DASH_FOCUS:-command}"
+component_health_fallback() {
+  local svc="$1" st="${2:-}" code="${3:-}" cname h
+  cname="${SAFE_STACK_NAME:-$DEFAULT_STACK_NAME}-$svc"
+  h="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cname" 2>/dev/null || true)"
+  case "$h" in
+    healthy|unhealthy|starting) printf '%s' "$h" ;;
+    running) printf 'healthy' ;;
+    exited) case "${code:-}" in 0|'') printf 'done' ;; *) printf 'failed' ;; esac ;;
+    "") [ "$st" = "exited" ] && [ "${code:-0}" = "0" ] && printf 'done' || printf '-' ;;
+    *) printf '%s' "$h" ;;
+  esac
+}
+
 collect_components() {
   COMP_LIST=""
   command_exists docker || return 0
   [ -f "$STACK_DIR/compose/docker-compose.yml" ] || return 0
-  COMP_LIST="$( cd "$STACK_DIR/compose" 2>/dev/null && \
-    docker compose -f docker-compose.yml ps -a --format '{{.Service}}|{{.Image}}|{{.State}}|{{.Health}}|{{.ExitCode}}' 2>/dev/null )" || COMP_LIST=""
+  local rows="" svc img st health code out=""
+  rows="$( cd "$STACK_DIR/compose" 2>/dev/null && \
+    docker compose -f docker-compose.yml ps -a --format '{{.Service}}|{{.Image}}|{{.State}}|{{.Health}}|{{.ExitCode}}' 2>/dev/null )" || rows=""
+  while IFS='|' read -r svc img st health code; do
+    [ -n "$svc" ] || continue
+    [ -n "$health" ] || health="$(component_health_fallback "$svc" "$st" "$code")"
+    out="${out}${svc}|${img}|${st}|${health}|${code}
+"
+  done <<EOF
+$rows
+EOF
+  COMP_LIST="$out"
 }
 
-# Operator table: context line, column header, one row per container. Column widths are
-# computed from the data so long names (ingest-docling) / images don't shift the table.
+component_count() {
+  printf '%s\n' "$COMP_LIST" | awk 'NF{n++} END{print n+0}'
+}
+
+component_service_at() {
+  local idx="$1"
+  printf '%s\n' "$COMP_LIST" | awk -F'|' -v want="$idx" 'NF{n++; if(n==want){print $1; exit}}'
+}
+
+shorten() {
+  local s="$1" max="$2"
+  if [ "$(vwidth "$s")" -le "$max" ]; then printf '%s' "$s"; return 0; fi
+  printf '%s…' "$(printf '%s' "$s" | awk -v m=$((max - 1)) '{print substr($0,1,m)}')"
+}
+
+component_dot() {
+  local st="$1" code="${2:-0}"
+  case "$st" in
+    running) printf '%s●%s' "$C_GREEN" "$C_RESET" ;;
+    exited)  case "$code" in 0|'') printf '%s●%s' "$C_DIM" "$C_RESET" ;; *) printf '%s●%s' "$C_RED" "$C_RESET" ;; esac ;;
+    dead)    printf '%s●%s' "$C_RED" "$C_RESET" ;;
+    *)       printf '%s●%s' "$C_YELLOW" "$C_RESET" ;;
+  esac
+}
+
+component_cell() {
+  local idx="$1" line svc img st health code sel=" " out
+  line="$(printf '%s\n' "$COMP_LIST" | awk -v want="$idx" 'NF{n++; if(n==want){print; exit}}')"
+  [ -n "$line" ] || { printf '%*s' 58 ""; return 0; }
+  IFS='|' read -r svc img st health code <<EOF
+$line
+EOF
+  img="${img##*/}"
+  svc="$(shorten "$svc" 15)"
+  img="$(shorten "$img" 18)"
+  [ -n "$health" ] || health="$([ "$st" = "running" ] && printf healthy || printf failed)"
+  [ "$idx" -eq "${COMP_SELECTED:-1}" ] 2>/dev/null && sel="${C_CYAN}›${C_RESET}"
+  out="$(printf '%s %s %s%-15s%s %s%-18s%s %-8s %-9s' \
+    "$sel" "$(component_dot "$st" "$code")" "$C_B" "$svc" "$C_RESET" "$C_DIM" "$img" "$C_RESET" "$st" "$health")"
+  pad_right "$out" 58
+}
+
+component_move() {
+  local dir="$1" n half cur
+  n="$(component_count)"; [ "$n" -gt 0 ] 2>/dev/null || return 0
+  half=$(( (n + 1) / 2 ))
+  cur="${COMP_SELECTED:-1}"
+  case "$dir" in
+    up)    cur=$((cur - 1)) ;;
+    down)  cur=$((cur + 1)) ;;
+    left)  cur=$((cur - half)) ;;
+    right) cur=$((cur + half)) ;;
+  esac
+  [ "$cur" -lt 1 ] && cur="$n"
+  [ "$cur" -gt "$n" ] && cur=1
+  COMP_SELECTED="$cur"
+}
+
+# Operator table: context line, two component columns, and a selected row for log navigation.
 render_components() {
   section_header "$(t sec_components)"
   [ -n "$COMP_LIST" ] || { printf '    %s(%s)%s\n' "$C_DIM" "$(t st_stopped)" "$C_RESET"; return 0; }
-  local svc img st health code dot nw=4 iw=5 l
-  while IFS='|' read -r svc img st health code; do
-    [ -n "$svc" ] || continue
-    img="${img##*/}"
-    l=${#svc}; [ "$l" -gt "$nw" ] && nw="$l"
-    l=${#img}; [ "$l" -gt "$iw" ] && iw="$l"
-  done <<EOF
-$COMP_LIST
-EOF
-  nw=$((nw + 1)); iw=$((iw + 1))
-  printf '    %s%-3s %-*s %-*s %-9s %s%s\n' "$C_DIM" "" "$nw" "NAME" "$iw" "IMAGE" "STATE" "HEALTH" "$C_RESET"
-  while IFS='|' read -r svc img st health code; do
-    [ -n "$svc" ] || continue
-    img="${img##*/}"      # short image + tag
-    # green = running; dim = a one-shot that finished cleanly (exit 0, e.g. ollama-pull);
-    # red = a real failure (non-zero exit / dead); yellow = transitional (created/restarting).
-    case "$st" in
-      running) dot="${C_GREEN}●${C_RESET}" ;;
-      exited)  case "${code:-0}" in 0|'') dot="${C_DIM}●${C_RESET}" ;; *) dot="${C_RED}●${C_RESET}" ;; esac ;;
-      dead)    dot="${C_RED}●${C_RESET}" ;;
-      *)       dot="${C_YELLOW}●${C_RESET}" ;;
-    esac
-    [ -z "$health" ] && health="-"
-    printf '    %s   %s%-*s%s %-*s %-9s %s\n' "$dot" "$C_B" "$nw" "$svc" "$C_RESET" "$iw" "$img" "$st" "$health"
-  done <<EOF
-$COMP_LIST
-EOF
+  local n half i right
+  n="$(component_count)"
+  [ "${COMP_SELECTED:-1}" -gt "$n" ] 2>/dev/null && COMP_SELECTED=1
+  half=$(( (n + 1) / 2 ))
+  printf '    %s  %-15s %-18s %-8s %-9s    %-15s %-18s %-8s %-9s%s\n' \
+    "$C_DIM" "NAME" "IMAGE" "STATE" "HEALTH" "NAME" "IMAGE" "STATE" "HEALTH" "$C_RESET"
+  i=1
+  while [ "$i" -le "$half" ]; do
+    right=$((i + half))
+    printf '    %s  %s\n' "$(component_cell "$i")" "$(component_cell "$right")"
+    i=$((i + 1))
+  done
+  printf '    %s%s%s\n' "$C_DIM" "$(t comp_nav_hint)" "$C_RESET"
   return 0
+}
+
+dashboard_read_choice() {
+  local c rest buf=""
+  if [ ! -t 0 ]; then IFS= read -r c || return 1; printf '%s' "$c"; return 0; fi
+  while true; do
+    IFS= read -rsn1 c || return 1
+    case "$c" in
+      $'\022') printf '__section_run'; return 0 ;;      # Ctrl+R
+      $'\004') printf '__section_data'; return 0 ;;     # Ctrl+D
+      $'\016') printf '__section_net'; return 0 ;;      # Ctrl+N
+      $'\017') printf '__section_settings'; return 0 ;; # Ctrl+O
+      $'\013') printf '__focus_toggle'; return 0 ;;     # Ctrl+K
+    esac
+
+    if [ "${DASH_FOCUS:-command}" = "components" ]; then
+      case "$c" in
+        "") printf '__enter'; return 0 ;;
+        $'\033')
+          IFS= read -rsn2 rest || rest=""
+          case "$rest" in
+            '[A') printf '__up' ;; '[B') printf '__down' ;; '[C') printf '__right' ;; '[D') printf '__left' ;;
+            *) printf '' ;;
+          esac
+          return 0 ;;
+        *) : ;;
+      esac
+      continue
+    fi
+
+    case "$c" in
+      "") printf '%s' "$buf"; return 0 ;;
+      $'\033') IFS= read -rsn2 rest || true ;; # swallow arrows in command mode
+      $'\177'|$'\010')
+        if [ -n "$buf" ]; then
+          buf="${buf%?}"
+          printf '\b \b' >&2
+        fi ;;
+      *)
+        case "$c" in
+          [[:print:]])
+            buf="$buf$c"
+            printf '%s' "$c" >&2 ;;
+        esac ;;
+    esac
+  done
+}
+
+dashboard_component_logs() {
+  local svc; svc="$(component_service_at "${COMP_SELECTED:-1}")"
+  [ -n "$svc" ] || return 0
+  sub_header "$svc logs"
+  compose logs --tail=220 "$svc" 2>&1 || true
+  printf '\n%s ' "$(t logs_back_hint)"
+  IFS= read -r _ || true
 }
 
 # Network map: the two egress proxies + their routes.
@@ -57,7 +180,7 @@ proxy_label() {
 render_netmap() {
   section_header "$(t sec_netmap)"
   printf '    %s%-13s%s %s%s%s  %s(LLM + %s)%s\n' "$C_DIM" "proxy-stack:" "$C_RESET" "$C_CYAN" "$(proxy_label "$EGRESS_STACK")" "$C_RESET" \
-    "$C_DIM" "$(t d_update)" "$C_RESET"
+    "$C_DIM" "$(t stack_updates_label)" "$C_RESET"
   printf '    %s%-13s%s %s%s%s  %s(web worker)%s\n' "$C_DIM" "proxy-web:" "$C_RESET" "$C_CYAN" "$(proxy_label "$EGRESS_WEB")" "$C_RESET" "$C_DIM" "$C_RESET"
   if iso_active; then
     printf '    %s%-13s%s ⇄ WG ⇄  %s%s%s  %s(%s)%s\n' "$C_DIM" "agents:" "$C_RESET" "$C_B" "${AGENT_WG_IP:-?}" "$C_RESET" "$C_DIM" "${AGENT_PUBLIC_IP:-?}" "$C_RESET"
@@ -89,42 +212,116 @@ header_stack() {
   printf '\n'
 }
 
-# ───────────────────────────── menus ─────────────────────────────
+render_dashboard_commands() {
+  printf '  %s%s%s\n' "$C_DIM" "$(t dash_commands)" "$C_RESET"
+  printf '  %s%s%s\n' "$C_DIM" "$(t dash_hotkeys)" "$C_RESET"
+}
+
+dashboard_section_menu() {
+  local title="$1"; shift
+  DASH_SECTION_CHOICE=""
+  clear_screen
+  sub_header "$title"
+  local i=1
+  while [ $# -gt 0 ]; do
+    printf '  %s[%s]%s %s\n' "$C_CYAN" "$i" "$C_RESET" "$1"
+    shift; i=$((i + 1))
+  done
+  printf '  %s[0]%s %s\n\n%s: ' "$C_CYAN" "$C_RESET" "$(t m_back)" "$(t menu_choice)"
+  local c; read_user_line c; DASH_SECTION_CHOICE="$(trim "$c")"
+}
+
+dashboard_run_section() {
+  local c
+  if stack_running; then
+    dashboard_section_menu "$(t dash_run)" "$(t d_stop)" "$(t d_restart)" "$(t d_status)" "$(t d_logs)"
+    c="$DASH_SECTION_CHOICE"
+    case "$c" in 1) stop_stack; pause ;; 2) restart_stack; pause ;; 3) status_stack; pause ;; 4) logs_stack ;; esac
+  else
+    dashboard_section_menu "$(t dash_run)" "$(t d_start)" "$(t d_restart)" "$(t d_status)" "$(t d_logs)"
+    c="$DASH_SECTION_CHOICE"
+    case "$c" in 1) start_stack; pause ;; 2) restart_stack; pause ;; 3) status_stack; pause ;; 4) logs_stack ;; esac
+  fi
+}
+
+dashboard_data_section() {
+  local c
+  dashboard_section_menu "$(t dash_data)" "$(t d_backup)" "$(t d_restore)" "$(t d_update)" "$(t d_rebuild)" "$(t d_components)"
+  c="$DASH_SECTION_CHOICE"
+  case "$c" in
+    1) backup_stack; pause ;; 2) restore_stack; pause ;; 3) update_rebuild; pause ;;
+    4) rebuild_only; pause ;; 5) component_manager; pause ;;
+  esac
+}
+
+dashboard_net_section() {
+  local c
+  dashboard_section_menu "$(t dash_net)" "$(t d_security)" "$(t d_proxy)" "$(t d_watchdog)" "$(t d_seal)" "trust-ca" "hosts"
+  c="$DASH_SECTION_CHOICE"
+  case "$c" in
+    1) security_menu; pause ;; 2) proxy_menu; pause ;; 3) watchdog_menu; pause ;;
+    4) if vault_enabled; then { vault_up && seal_now || unseal_now; }; elif seal_enabled && ! is_sealed; then seal_now; else unseal_now; fi; pause ;;
+    5) trust_ca; pause ;; 6) add_hosts_entries; pause ;;
+  esac
+}
+
+dashboard_settings_section() {
+  local c
+  dashboard_section_menu "$(t dash_settings)" "$(t d_reinstall)" "$(t d_uninstall)" "$(t d_lang)" "$(t d_help)" "$(t quit)"
+  c="$DASH_SECTION_CHOICE"
+  case "$c" in
+    1) existing_install_flow; pause ;; 2) uninstall_stack; exit 0 ;; 3) choose_lang ;;
+    4) print_help; pause ;; 5) exit 0 ;;
+  esac
+}
+
 installed_menu() {
   load_config || return 1
   ensure_lang; check_update_status
   while true; do
     header_stack
     printf '  %s%s%s\n\n' "$C_B$C_CYAN" "$(t dash_manage)" "$C_RESET"
-    menu_line "$(t dash_run)"  1 "$(t d_start)" 2 "$(t d_stop)" 3 "$(t d_restart)" 4 "$(t d_status)" 5 "$(t d_logs)"
-    menu_line "$(t dash_data)" b "$(t d_backup)" r "$(t d_restore)" u "$(t d_update)" g "$(t d_rebuild)" a "$(t d_components)"
-    menu_line "$(t dash_net)"  s "$(t d_security)" p "$(t d_proxy)" w "$(t d_watchdog)" e "$(t d_seal)" t "trust-ca" h "hosts"
-    iso_active && menu_line "" f "$(t d_fleet)"
-    menu_line "$(t dash_settings)" l "$(t d_lang)" '?' "$(t d_help)" q "$(t quit)"
-    printf '\n%s: ' "$(t menu_choice_cmd)"
-    local c=""; IFS= read -r c || exit 0
-    # Accept a hotkey OR a typed command (start, stop, backup, security, …).
+    render_dashboard_commands
+    if [ "${DASH_FOCUS:-command}" = "components" ]; then
+      printf '\n%s: ' "$(t dash_component_focus)"
+    else
+      printf '\n%s: ' "$(t menu_choice_cmd)"
+    fi
+    local c=""; c="$(dashboard_read_choice)" || exit 0
+    printf '\n'
     case "$(trim "$c" | tr 'A-Z' 'a-z')" in
-      1|start)            start_stack; pause ;;
-      2|stop)             stop_stack; pause ;;
-      3|restart)          restart_stack; pause ;;
-      4|status)           status_stack; pause ;;
-      5|logs)             logs_stack ;;
-      b|backup)           backup_stack; pause ;;
-      r|restore)          restore_stack; pause ;;
-      u|update)           update_rebuild; pause ;;
-      g|rebuild)          rebuild_only; pause ;;
-      a|components|upgrade) component_manager; pause ;;
-      s|security)         security_menu; pause ;;
-      p|proxy|proxies)    proxy_menu; pause ;;
-      w|watchdog)         watchdog_menu; pause ;;
-      e|seal|unseal)      if vault_enabled; then { vault_up && seal_now || unseal_now; }; elif seal_enabled && ! is_sealed; then seal_now; else unseal_now; fi; pause ;;
-      f|fleet)            iso_active && fleet_menu; pause ;;
-      t|trust-ca|trustca) trust_ca; pause ;;
-      h|hosts|add-hosts)  add_hosts_entries; pause ;;
-      l|lang|language)    choose_lang ;;
-      \?|help)            print_help; pause ;;
-      q|quit|exit)        exit 0 ;;
+      __section_run)      dashboard_run_section ;;
+      __section_data)     dashboard_data_section ;;
+      __section_net)      dashboard_net_section ;;
+      __section_settings) dashboard_settings_section ;;
+      __focus_toggle)     [ "${DASH_FOCUS:-command}" = "components" ] && DASH_FOCUS="command" || DASH_FOCUS="components" ;;
+      __up)              component_move up ;;
+      __down)            component_move down ;;
+      __left)            component_move left ;;
+      __right)           component_move right ;;
+      __enter)           dashboard_component_logs ;;
+      start)              start_stack; pause ;;
+      stop)               stop_stack; pause ;;
+      restart)            restart_stack; pause ;;
+      status)             status_stack; pause ;;
+      logs)               logs_stack ;;
+      backup)             backup_stack; pause ;;
+      restore)            restore_stack; pause ;;
+      update)             update_rebuild; pause ;;
+      rebuild)            rebuild_only; pause ;;
+      components|upgrade) component_manager; pause ;;
+      security)           security_menu; pause ;;
+      proxy|proxies)      proxy_menu; pause ;;
+      watchdog)           watchdog_menu; pause ;;
+      seal|unseal)        if vault_enabled; then { vault_up && seal_now || unseal_now; }; elif seal_enabled && ! is_sealed; then seal_now; else unseal_now; fi; pause ;;
+      fleet)              iso_active && fleet_menu; pause ;;
+      trust-ca|trustca)   trust_ca; pause ;;
+      hosts|add-hosts)    add_hosts_entries; pause ;;
+      reinstall)          existing_install_flow; pause ;;
+      uninstall)          uninstall_stack; exit 0 ;;
+      lang|language)      choose_lang ;;
+      help|\?)            print_help; pause ;;
+      quit|exit)          exit 0 ;;
       "")                 : ;;
       *)                  echo "$(t no_such_item)"; pause ;;
     esac
@@ -141,7 +338,7 @@ bootstrap_menu() {
     printf '  %s[3]%s %s\n' "$C_CYAN" "$C_RESET" "$(t bm_upgrade)"
     printf '  %s[4]%s %s\n' "$C_CYAN" "$C_RESET" "$(t bm_selfupdate)"
     printf '  %s[5]%s %s\n\n' "$C_CYAN" "$C_RESET" "$(t bm_lang)"
-    printf '  %s[q]%s %s\n\n' "$C_CYAN" "$C_RESET" "$(t quit)"
+    printf '  %s[0]%s %s\n\n' "$C_CYAN" "$C_RESET" "$(t quit)"
     printf '%s: ' "$(t menu_choice)"
     local c=""; IFS= read -r c || exit 0
     case "$(trim "$c")" in
@@ -150,7 +347,7 @@ bootstrap_menu() {
       3) component_manager; pause ;;
       4) self_update; pause ;;
       5) choose_lang ;;
-      q|Q) exit 0 ;;
+      0) exit 0 ;;
       *) echo "$(t no_such_item)"; pause ;;
     esac
   done
@@ -179,7 +376,7 @@ component_manager() {
     printf '\n%s\n%s: ' "$(t cm_hint)" "$(t menu_choice)"
     local line n; read_user_line line; line="$(trim "$line")"
     case "$line" in
-      q|Q) return 0 ;; "") break ;;
+      0) return 0 ;; "") break ;;
       *) for n in $line; do case "$n" in
            1) [ "$t_owui" = true ] && t_owui=false || t_owui=true ;;
            2) [ "$t_oh" = true ] && t_oh=false || t_oh=true ;;
@@ -217,6 +414,63 @@ apply_security_to_host() {
   write_all_configs >/dev/null 2>&1 || true
 }
 
+proxy_apply_quiet() {
+  load_config || { echo "$(t no_env)"; return 1; }
+  ensure_path_brew
+  start_colima_if_needed
+
+  local apply_stack="false" apply_web="false" explicit="false"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      stack) EGRESS_STACK="${2:-$EGRESS_STACK}"; apply_stack="true"; explicit="true"; shift 2 ;;
+      web) EGRESS_WEB="${2:-$EGRESS_WEB}"; apply_web="true"; explicit="true"; shift 2 ;;
+      route-local-llm) ROUTE_LOCAL_LLM="${2:-$ROUTE_LOCAL_LLM}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [ "$explicit" = "false" ]; then apply_stack="true"; apply_web="true"; fi
+
+  compute_egress_endpoints
+  write_all_configs >/dev/null || return 1
+  build_openhands_sandbox >/dev/null 2>&1 || true
+
+  local up_services="" app_services=""
+  [ "$apply_stack" = "true" ] && egress_stack_enabled && up_services="$up_services proxy-stack"
+  [ "$apply_web" = "true" ] && egress_web_enabled && up_services="$up_services proxy-web"
+  if [ -n "$up_services" ]; then
+    # shellcheck disable=SC2086
+    compose up -d --build --remove-orphans $up_services >/dev/null 2>&1 || return 1
+  fi
+
+  if [ "$apply_stack" = "true" ] && stack_via_proxy && egress_stack_enabled; then
+    [ "$ENABLE_OPENWEBUI" = "true" ] && app_services="$app_services openwebui"
+    [ "$OPENHANDS_DOCKER_MODE" = "dind" ] && app_services="$app_services dind"
+    [ "$ENABLE_AGENTS" = "true" ] && app_services="$app_services openhands"
+  fi
+  if [ "$apply_web" = "true" ] && web_via_proxy && egress_web_enabled; then
+    [ "$ENABLE_SEARCH" = "true" ] && app_services="$app_services searxng"
+  fi
+
+  if [ -n "$app_services" ]; then
+    local recreate_openhands="false"
+    if printf '%s\n' "$app_services" | grep -qw openhands; then
+      recreate_openhands="true"
+      app_services="$(printf '%s\n' "$app_services" | tr ' ' '\n' | grep -v '^openhands$' | xargs || true)"
+      compose rm -sf openhands >/dev/null 2>&1 || true
+    fi
+    # shellcheck disable=SC2086
+    if [ -n "$app_services" ]; then
+      compose up -d --no-deps --force-recreate $app_services >/dev/null 2>&1 || return 1
+    fi
+    if [ "$recreate_openhands" = "true" ]; then
+      compose up -d --no-deps openhands >/dev/null 2>&1 || return 1
+    fi
+  fi
+
+  prune_disabled_services >/dev/null 2>&1 || true
+  printf 'proxy-stack=%s proxy-web=%s\n' "$EGRESS_STACK" "$EGRESS_WEB"
+}
+
 # ── proxy management: enable/disable + configure each, then apply ──
 proxy_menu() {
   load_config || { echo "$(t no_env)"; return 1; }
@@ -225,14 +479,14 @@ proxy_menu() {
     printf '  %s[1]%s proxy-stack  %s%s%s  %s(%s)%s\n' "$C_CYAN" "$C_RESET" "$C_B" "$(proxy_label "$EGRESS_STACK")" "$C_RESET" "$C_DIM" "$(t px_stack)" "$C_RESET"
     printf '  %s[2]%s proxy-web    %s%s%s  %s(%s)%s\n' "$C_CYAN" "$C_RESET" "$C_B" "$(proxy_label "$EGRESS_WEB")" "$C_RESET" "$C_DIM" "$(t px_web)" "$C_RESET"
     printf '  %s[3]%s %s: %s\n' "$C_CYAN" "$C_RESET" "$(t px_local_q)" "$(bool_label "$ROUTE_LOCAL_LLM")"
-    printf '  %s[a]%s apply   %s[b]%s %s\n\n%s: ' "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$(t m_back)" "$(t menu_choice)"
+    printf '  %s[4]%s apply   %s[0]%s %s\n\n%s: ' "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET" "$(t m_back)" "$(t menu_choice)"
     local c; IFS= read -r c || return 0
     case "$(trim "$c")" in
       1) choose_egress_slot stack '0'; configure_egress_secrets stack ;;
       2) choose_egress_slot web '0'; configure_egress_secrets web ;;
       3) [ "$ROUTE_LOCAL_LLM" = "true" ] && ROUTE_LOCAL_LLM="false" || ROUTE_LOCAL_LLM="true" ;;
-      a) compute_egress_endpoints; write_all_configs; build_openhands_sandbox; compose up -d --build --remove-orphans; prune_disabled_services; reload_caddy; return 0 ;;
-      b|"") return 0 ;;
+      4) compute_egress_endpoints; write_all_configs; build_openhands_sandbox; compose up -d --build --remove-orphans; prune_disabled_services; reload_caddy; return 0 ;;
+      0|"") return 0 ;;
       *) : ;;
     esac
   done
@@ -242,7 +496,7 @@ watchdog_menu() {
   load_config || { echo "$(t no_env)"; return 1; }
   sub_header "$(t d_watchdog)"
   printf '  %s: %s%s%s\n\n' "$(t sec_wd_l)" "$C_B" "$(watchdog_state)" "$C_RESET"
-  menu_line "" 1 "$(t on)" 2 "$(t off)" b "$(t m_back)"
+  menu_line "" 1 "$(t on)" 2 "$(t off)" 0 "$(t m_back)"
   printf '%s: ' "$(t menu_choice)"
   local c; IFS= read -r c || return 0
   case "$(trim "$c")" in 1) watchdog_enable ;; 2) watchdog_disable ;; *) : ;; esac
